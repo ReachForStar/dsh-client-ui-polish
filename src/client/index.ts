@@ -23,6 +23,7 @@ import { BACKGROUND_SETTINGS_NAMESPACE, type PolishSettings } from '../backgroun
 import { BackgroundRuntime } from './background-runtime.ts'
 import { BackgroundRow, type BackgroundRowInjected } from './BackgroundRow.tsx'
 import { createBackgroundRowStore } from './settings-store.ts'
+import { createModelIndex, modelIndexDefinition, type ModelIndex } from './model-index.ts'
 import { StatsFloat } from './StatsFloat.tsx'
 import { MutationDiffPanel } from './MutationDiffPanel.tsx'
 import { en, zh, type PolishKey } from './locales.ts'
@@ -65,7 +66,7 @@ body[data-ds-bg-image] {
 `
 
 /** Required services: settings transport plus slots/locale for the registrations. */
-export const inject = ['slots', 'locale', 'connection', 'remote', 'settingsScope']
+export const inject = ['slots', 'locale', 'connection', 'remote', 'settingsScope', 'conversationEvents']
 
 /**
  * Client plugin body: bind the background preference, paint the body, and
@@ -87,6 +88,19 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => () => { background.dispose() }, 'ui-polish: background dispose')
 
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-polish: dictionaries')
+
+  // Per-model billing index: this plugin's own messageId → model record, fed
+  // by a state-only Conversation Definition over the same assistant/message
+  // events the core nodes fold (the core nodes carry usage but not model
+  // provenance — upstream gap). StatsFloat reads the index through its
+  // injected `modelOf` face.
+  const modelIndex = createModelIndex()
+  ctx.inject(['conversationEvents'], (scope: ClientContext) => {
+    const conversationEvents = scope.conversationEvents
+    scope.effect(() => conversationEvents.register(
+      modelIndexDefinition(modelIndex),
+    ), 'ui-polish: model index definition')
+  })
 
   const store = createBackgroundRowStore()
   let bound: BoundActions<typeof store> | undefined
@@ -115,7 +129,13 @@ export function apply(ctx: ClientContext): void {
   }, BackgroundRow))
 
   ctx.slots.inject('conversation.composer.dock', function* () {
-    yield ctx.slots.register({ name: 'conversation.composer.dock', id: 'polish-stats', order: 0, locale: NS }, StatsFloat)
+    yield ctx.slots.register({
+      name: 'conversation.composer.dock',
+      id: 'polish-stats',
+      order: 0,
+      locale: NS,
+      inject: (): { modelOf: ModelIndex['modelOf'] } => ({ modelOf: modelIndex.modelOf }),
+    }, StatsFloat)
     yield ctx.slots.register({ name: 'conversation.composer.dock', id: 'polish-diff', order: 10, locale: NS }, MutationDiffPanel)
   })
 }

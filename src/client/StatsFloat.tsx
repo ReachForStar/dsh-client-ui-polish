@@ -64,9 +64,14 @@ function projectionFromNodeUsage(usage: unknown): TokenUsageProjection | null {
   return { uncachedInputTokens: uncached, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite }
 }
 
-/** One assistant node's model id, when the message recorded its provenance. */
-function modelOfNode(node: ConversationSnapshot['chat']['legacy']['nodes'][number]): string | undefined {
-  return node.kind === 'assistant' ? node.provenance?.model : undefined
+/** One assistant node's model id, via the plugin's messageId → model index. */
+function modelOfNode(
+  node: ConversationSnapshot['chat']['legacy']['nodes'][number],
+  modelOf: (messageId: string) => string | undefined,
+): string | undefined {
+  if (node.kind !== 'assistant') return undefined
+  if (node.messageId === undefined) return undefined
+  return modelOf(String(node.messageId))
 }
 
 /**
@@ -76,15 +81,17 @@ function modelOfNode(node: ConversationSnapshot['chat']['legacy']['nodes'][numbe
  * a model or without usage are skipped; the caller falls back to the durable
  * projection when nothing is attributable.
  * @param nodes - the conversation snapshot's legacy nodes.
+ * @param modelOf - the plugin's messageId → model index lookup.
  * @returns model → summed usage; empty when no node carries both.
  */
 export function usageByModel(
   nodes: readonly ConversationSnapshot['chat']['legacy']['nodes'][number][],
+  modelOf: (messageId: string) => string | undefined,
 ): Map<string, TokenUsageProjection> {
   const totals = new Map<string, TokenUsageProjection>()
   for (const node of nodes) {
     if (node.kind !== 'assistant') continue
-    const model = modelOfNode(node)
+    const model = modelOfNode(node, modelOf)
     if (model === undefined) continue
     const usage = projectionFromNodeUsage(node.usage)
     if (usage === null) continue
@@ -154,10 +161,13 @@ function windowStats(nodes: ConversationSnapshot['chat']['legacy']['nodes']): Wi
   return { turns: turns.size, steps, llmMs, toolMs, ttftMs, ttftSteps }
 }
 
-/** Full component props: session runtime share + the ui-polish locale seat. */
-export type StatsFloatProps = PropsRuntime<'conversation.composer.dock'> & PropsLocale<'ui-polish'>
+/** Full component props: session runtime share + the ui-polish locale seat + injected model index. */
+export type StatsFloatProps = PropsRuntime<'conversation.composer.dock'> & PropsLocale<'ui-polish'> & {
+  /** Resolve one settled assistant message's model id (plugin-owned index). */
+  modelOf: (messageId: string) => string | undefined
+}
 
-export const StatsFloat = memo(function StatsFloat({ useSession, useProjection, t }: StatsFloatProps) {
+export const StatsFloat = memo(function StatsFloat({ useSession, useProjection, t, modelOf }: StatsFloatProps) {
   const settledNodes = useSession(s => s.chat.legacy.nodes)
   const usage = useProjection('tokenUsage')
   const projected = useProjection('sessionStats')
@@ -191,7 +201,7 @@ export const StatsFloat = memo(function StatsFloat({ useSession, useProjection, 
   // node usage bills each step at its own model's rate; when no settled node
   // carries attributable usage, fall back to the durable projection at the
   // default card so an estimate still shows.
-  const byModel = useMemo(() => usageByModel(settledNodes), [settledNodes])
+  const byModel = useMemo(() => usageByModel(settledNodes, modelOf), [settledNodes, modelOf])
   const bill = usage !== undefined && (billedInputTokens(usage) > 0 || usage.outputTokens > 0)
     ? usage
     : undefined
