@@ -122,7 +122,7 @@ export const StatsFloat = memo(function StatsFloat({ useSession, useProjection, 
   }
   if (groups.length === 0 && costDisplay === null) return null
   return (
-    <div className={css.root}>
+    <div className={css.root} data-ui-polish-stats="">
       {groups.length > 0 && (
         <div className={css.line}>
           {groups.map((group, i) => (

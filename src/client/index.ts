@@ -55,6 +55,13 @@ body[data-ds-bg-image] {
   --dsw-alias-bg-base: transparent;
   --dsw-specific-sidebar-fill: transparent;
 }
+/* This plugin owns the composer.dock readout: its floating stats and diff
+   panels carry data-ui-polish-* markers, so every other dock entry (the
+   core's under-composer stats band) is hidden to avoid duplicating the
+   session readout. */
+[data-slot="conversation.composer.dock"] > *:not([data-ui-polish-stats]):not([data-ui-polish-diff]) {
+  display: none;
+}
 `
 
 /** Required services: settings transport plus slots/locale for the registrations. */

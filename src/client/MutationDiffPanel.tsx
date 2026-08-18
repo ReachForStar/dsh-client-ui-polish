@@ -56,7 +56,7 @@ export function MutationDiffPanel({ useSession, sessionId, t }: MutationDiffPane
 
   if (shown === null) return null
   return (
-    <div className={css.root} role="region" aria-label={t('diff.title')}>
+    <div className={css.root} role="region" aria-label={t('diff.title')} data-ui-polish-diff="">
       <div className={css.header}>
         <span className={css.title}>{t('diff.title')} · {shown.name}</span>
         <button
