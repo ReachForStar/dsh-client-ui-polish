@@ -42,6 +42,82 @@ function cacheHitPercent(usage: TokenUsageProjection): number | null {
   return denominator === 0 ? null : Math.round(usage.cacheReadTokens / denominator * 100)
 }
 
+/** One assistant node's provider-reported usage, field names per dsh-llm TokenUsage. */
+interface NodeUsageLike {
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+}
+
+/** Normalize one assistant node's usage into the projection bucket shape. */
+function projectionFromNodeUsage(usage: unknown): TokenUsageProjection | null {
+  if (typeof usage !== 'object' || usage === null) return null
+  const raw = usage as NodeUsageLike
+  const num = (value: unknown): number =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0
+  const uncached = num(raw.inputTokens)
+  const output = num(raw.outputTokens)
+  const cacheRead = num(raw.cacheReadTokens)
+  const cacheWrite = num(raw.cacheWriteTokens)
+  if (uncached + output + cacheRead + cacheWrite === 0) return null
+  return { uncachedInputTokens: uncached, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite }
+}
+
+/** One assistant node's model id, when the message recorded its provenance. */
+function modelOfNode(node: ConversationSnapshot['chat']['legacy']['nodes'][number]): string | undefined {
+  return node.kind === 'assistant' ? node.provenance?.model : undefined
+}
+
+/**
+ * Model-keyed usage totals over the settled assistant nodes in the window.
+ * Each finalized message carries its own provider usage and model, so a
+ * session that switched models bills each step at its own rate. Nodes without
+ * a model or without usage are skipped; the caller falls back to the durable
+ * projection when nothing is attributable.
+ * @param nodes - the conversation snapshot's legacy nodes.
+ * @returns model → summed usage; empty when no node carries both.
+ */
+export function usageByModel(
+  nodes: readonly ConversationSnapshot['chat']['legacy']['nodes'][number][],
+): Map<string, TokenUsageProjection> {
+  const totals = new Map<string, TokenUsageProjection>()
+  for (const node of nodes) {
+    if (node.kind !== 'assistant') continue
+    const model = modelOfNode(node)
+    if (model === undefined) continue
+    const usage = projectionFromNodeUsage(node.usage)
+    if (usage === null) continue
+    const prior = totals.get(model)
+    if (prior === undefined) {
+      totals.set(model, usage)
+    } else {
+      totals.set(model, {
+        uncachedInputTokens: prior.uncachedInputTokens + usage.uncachedInputTokens,
+        outputTokens: prior.outputTokens + usage.outputTokens,
+        cacheReadTokens: prior.cacheReadTokens + usage.cacheReadTokens,
+        cacheWriteTokens: prior.cacheWriteTokens + usage.cacheWriteTokens,
+      })
+    }
+  }
+  return totals
+}
+
+/** Sum one model-keyed usage map into a single projection (for the tooltip). */
+function sumUsageByModel(byModel: ReadonlyMap<string, TokenUsageProjection>): TokenUsageProjection {
+  let uncachedInputTokens = 0
+  let outputTokens = 0
+  let cacheReadTokens = 0
+  let cacheWriteTokens = 0
+  for (const usage of byModel.values()) {
+    uncachedInputTokens += usage.uncachedInputTokens
+    outputTokens += usage.outputTokens
+    cacheReadTokens += usage.cacheReadTokens
+    cacheWriteTokens += usage.cacheWriteTokens
+  }
+  return { uncachedInputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }
+}
+
 /** Window-scoped fallback totals (only when the sessionStats projection is absent). */
 interface WindowStats {
   turns: number
@@ -111,14 +187,39 @@ export const StatsFloat = memo(function StatsFloat({ useSession, useProjection, 
     }))
   }
   // Cost rides the same billed-activity gate; a sub-cent bill reads as ¥0.00
-  // and the row hides, so a fresh or failed session gains no noise.
+  // and the row hides, so a fresh or failed session gains no noise. Model-keyed
+  // node usage bills each step at its own model's rate; when no settled node
+  // carries attributable usage, fall back to the durable projection at the
+  // default card so an estimate still shows.
+  const byModel = useMemo(() => usageByModel(settledNodes), [settledNodes])
   const bill = usage !== undefined && (billedInputTokens(usage) > 0 || usage.outputTokens > 0)
     ? usage
     : undefined
+  const nodeBill = byModel.size > 0 ? sumUsageByModel(byModel) : null
   let costDisplay: { label: string; detail: ReturnType<typeof costBreakdown> } | null = null
-  if (bill !== undefined) {
-    const label = formatCost(estimateCost(bill))
-    if (label !== '¥0.00') costDisplay = { label, detail: costBreakdown(bill) }
+  if (nodeBill !== null || bill !== undefined) {
+    const label = nodeBill !== null
+      ? formatCost([...byModel].reduce(
+        (sum, [model, usage]) => sum + estimateCost(usage, model),
+        0,
+      ))
+      : formatCost(estimateCost(bill!))
+    if (label !== '¥0.00') {
+      const detail = nodeBill !== null
+        ? [...byModel].reduce(
+          (acc, [model, usage]) => {
+            const parts = costBreakdown(usage, model)
+            return {
+              input: acc.input + parts.input,
+              cache: acc.cache + parts.cache,
+              output: acc.output + parts.output,
+            }
+          },
+          { input: 0, cache: 0, output: 0 },
+        )
+        : costBreakdown(bill!)
+      costDisplay = { label, detail }
+    }
   }
   if (groups.length === 0 && costDisplay === null) return null
   return (

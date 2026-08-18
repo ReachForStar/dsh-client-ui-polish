@@ -1,0 +1,192 @@
+{
+  "$comment": "Model rate card in CNY per 1M tokens, converted once from the amaxsmp gateway pricing (https://ai.amaxsmp.com/api/pricing) on 2026-08-18. Edit freely; rebuild the plugin for changes to take effect. Omitted cache fields fall back to the default rate card (cache writes bill at the uncached-input rate). Unknown models fall back to \"default\".",
+  "default": {
+    "inputPerMillion": 1.5,
+    "outputPerMillion": 4.5,
+    "cacheReadPerMillion": 0.05,
+    "cacheWritePerMillion": 1.5
+  },
+  "models": {
+    "claude-fable-5": {
+      "inputPerMillion": 70.0,
+      "outputPerMillion": 350.0,
+      "cacheReadPerMillion": 7.0,
+      "cacheWritePerMillion": 87.5
+    },
+    "claude-haiku-4-5-20251001": {
+      "inputPerMillion": 7.0,
+      "outputPerMillion": 35.0,
+      "cacheReadPerMillion": 0.7,
+      "cacheWritePerMillion": 8.75
+    },
+    "claude-opus-4-6": {
+      "inputPerMillion": 35.0,
+      "outputPerMillion": 175.0,
+      "cacheReadPerMillion": 3.5,
+      "cacheWritePerMillion": 43.75
+    },
+    "claude-opus-4-7": {
+      "inputPerMillion": 35.0,
+      "outputPerMillion": 175.0,
+      "cacheReadPerMillion": 3.5,
+      "cacheWritePerMillion": 43.75
+    },
+    "claude-opus-4-8": {
+      "inputPerMillion": 35.0,
+      "outputPerMillion": 175.0,
+      "cacheReadPerMillion": 3.5,
+      "cacheWritePerMillion": 43.75
+    },
+    "claude-opus-5": {
+      "inputPerMillion": 35.0,
+      "outputPerMillion": 175.0,
+      "cacheReadPerMillion": 3.5,
+      "cacheWritePerMillion": 43.75
+    },
+    "claude-sonnet-4-5": {
+      "inputPerMillion": 21.0,
+      "outputPerMillion": 105.0,
+      "cacheReadPerMillion": 2.1,
+      "cacheWritePerMillion": 26.25
+    },
+    "claude-sonnet-4-6": {
+      "inputPerMillion": 21.0,
+      "outputPerMillion": 105.0,
+      "cacheReadPerMillion": 2.1,
+      "cacheWritePerMillion": 26.25
+    },
+    "deepseek-v4-flash": {
+      "inputPerMillion": 1.5,
+      "outputPerMillion": 4.5,
+      "cacheReadPerMillion": 0.05
+    },
+    "deepseek-v4-flash-nothinking": {
+      "inputPerMillion": 1.5,
+      "outputPerMillion": 4.5,
+      "cacheReadPerMillion": 0.05
+    },
+    "deepseek-v4-pro": {
+      "inputPerMillion": 4.5,
+      "outputPerMillion": 13.5,
+      "cacheReadPerMillion": 0.15
+    },
+    "deepseek-v4-pro-nothinking": {
+      "inputPerMillion": 4.5,
+      "outputPerMillion": 13.5,
+      "cacheReadPerMillion": 0.15
+    },
+    "gemini-2.5-flash": {
+      "inputPerMillion": 2.1,
+      "outputPerMillion": 17.5,
+      "cacheReadPerMillion": 0.21,
+      "cacheWritePerMillion": 7.0
+    },
+    "gemini-3.5-flash": {
+      "inputPerMillion": 10.5,
+      "outputPerMillion": 63.0,
+      "cacheReadPerMillion": 1.05
+    },
+    "gemma-4": {
+      "inputPerMillion": 0.0,
+      "outputPerMillion": 0.0
+    },
+    "gemma-4-31B": {
+      "inputPerMillion": 0.1,
+      "outputPerMillion": 0.5
+    },
+    "glm-5.2": {
+      "inputPerMillion": 8.0,
+      "outputPerMillion": 28.0,
+      "cacheReadPerMillion": 2.0
+    },
+    "glm-5.3": {
+      "inputPerMillion": 8.0,
+      "outputPerMillion": 28.0,
+      "cacheReadPerMillion": 2.0
+    },
+    "gpt-4.1": {
+      "inputPerMillion": 14.0,
+      "outputPerMillion": 56.0,
+      "cacheReadPerMillion": 3.5
+    },
+    "gpt-4.1-mini": {
+      "inputPerMillion": 2.8,
+      "outputPerMillion": 11.2
+    },
+    "gpt-4o-mini": {
+      "inputPerMillion": 1.05,
+      "outputPerMillion": 4.2,
+      "cacheReadPerMillion": 0.525
+    },
+    "gpt-5": {
+      "inputPerMillion": 8.75,
+      "outputPerMillion": 70.0,
+      "cacheReadPerMillion": 0.875
+    },
+    "gpt-5-mini": {
+      "inputPerMillion": 1.75,
+      "outputPerMillion": 14.0,
+      "cacheReadPerMillion": 0.175
+    },
+    "gpt-5.4": {
+      "inputPerMillion": 17.5,
+      "outputPerMillion": 105.0,
+      "cacheReadPerMillion": 1.75
+    },
+    "gpt-5.4-mini": {
+      "inputPerMillion": 5.25,
+      "outputPerMillion": 31.5,
+      "cacheReadPerMillion": 0.49
+    },
+    "gpt-5.5": {
+      "inputPerMillion": 35.0,
+      "outputPerMillion": 210.0,
+      "cacheReadPerMillion": 3.5
+    },
+    "kimi-k2.6": {
+      "inputPerMillion": 6.5,
+      "outputPerMillion": 27.0,
+      "cacheReadPerMillion": 1.1
+    },
+    "kimi-k3": {
+      "inputPerMillion": 20.0,
+      "outputPerMillion": 100.0,
+      "cacheReadPerMillion": 2.0
+    },
+    "MiniMax-M2.7": {
+      "inputPerMillion": 2.1,
+      "outputPerMillion": 8.4,
+      "cacheReadPerMillion": 0.42
+    },
+    "MiniMax-M3": {
+      "inputPerMillion": 4.2,
+      "outputPerMillion": 16.8,
+      "cacheReadPerMillion": 0.84
+    },
+    "qwen3.7-max": {
+      "inputPerMillion": 12.0,
+      "outputPerMillion": 36.0,
+      "cacheReadPerMillion": 2.4
+    },
+    "qwen3.7-max-nothinking": {
+      "inputPerMillion": 12.0,
+      "outputPerMillion": 36.0,
+      "cacheReadPerMillion": 2.4
+    },
+    "qwen3.7-max-search-preview": {
+      "inputPerMillion": 12.0,
+      "outputPerMillion": 36.0,
+      "cacheReadPerMillion": 2.4
+    },
+    "qwen3.8-max": {
+      "inputPerMillion": 12.0,
+      "outputPerMillion": 36.0,
+      "cacheReadPerMillion": 1.5
+    },
+    "step-3.7-flash": {
+      "inputPerMillion": 1.35,
+      "outputPerMillion": 8.1,
+      "cacheReadPerMillion": 0.27
+    }
+  }
+}

@@ -108,6 +108,40 @@ describe('StatsFloat', () => {
     expect(view.container.textContent).toContain('费用 ¥1.35')
   })
 
+  it('bills each assistant step at its own model rate from node provenance', () => {
+    const flash: AssistantMessageNode = {
+      kind: 'assistant', seq: 1, time: 1_000, turn: 1, step: 1, blocks: [{ kind: 'text', text: 'a' }],
+      provenance: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+      usage: { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    }
+    const pro: AssistantMessageNode = {
+      kind: 'assistant', seq: 2, time: 2_000, turn: 2, step: 1, blocks: [{ kind: 'text', text: 'b' }],
+      provenance: { provider: 'deepseek-official', model: 'deepseek-v4-pro' },
+      usage: { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    }
+    const { source } = makeSource([flash, pro])
+    // flash input ¥1.5 + pro input ¥4.5 = ¥6.00; node usage wins over the projection.
+    const view = render(<StatsFloat {...props(source, {
+      tokenUsage: { uncachedInputTokens: 2_000_000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 },
+      sessionStats: sessionStats({ turns: 2, steps: 2 }),
+    })} />)
+    expect(view.container.textContent).toContain('费用 ¥6.00')
+  })
+
+  it('falls back to the default card when no settled node carries model usage', () => {
+    const unmodeled: AssistantMessageNode = {
+      kind: 'assistant', seq: 1, time: 1_000, turn: 1, step: 1, blocks: [{ kind: 'text', text: 'a' }],
+      usage: { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    }
+    const { source } = makeSource([unmodeled])
+    const view = render(<StatsFloat {...props(source, {
+      tokenUsage: { uncachedInputTokens: 1_000_000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 },
+      sessionStats: sessionStats({ turns: 1, steps: 1 }),
+    })} />)
+    // No provenance → projection at the default card: ¥1.50.
+    expect(view.container.textContent).toContain('费用 ¥1.50')
+  })
+
   it('renders nothing when there are no steps and no billed activity', () => {
     const { source } = makeSource()
     const view = render(<StatsFloat {...props(source, {})} />)

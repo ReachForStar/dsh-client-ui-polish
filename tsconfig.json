@@ -6,6 +6,7 @@
     "declaration": true,
     "sourceMap": true,
     "declarationMap": true,
+    "resolveJsonModule": true,
     "composite": true,
     "incremental": true,
     "skipLibCheck": true,
@@ -25,5 +26,5 @@
     "rootDir": "src",
     "outDir": "lib/types"
   },
-  "include": ["src"]
+  "include": ["src", "src/**/*.json"]
 }
