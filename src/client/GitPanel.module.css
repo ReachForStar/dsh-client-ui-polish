@@ -1,9 +1,9 @@
-/* Floating git panel: pinned to the right edge, overlaying the conversation
-   without any core layout change. */
+/* Floating git panel: pinned to the lower-right corner, overlaying the
+   conversation without any core layout change. */
 
 .root {
   position: fixed;
-  top: 12px;
+  bottom: 16px;
   right: 32px;
   z-index: 30;
   display: block;
@@ -23,7 +23,7 @@
 
 .toggle {
   position: fixed;
-  top: 12px;
+  bottom: 16px;
   right: 32px;
   z-index: 30;
   padding: 4px 10px;

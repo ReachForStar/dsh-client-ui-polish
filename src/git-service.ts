@@ -1,17 +1,19 @@
 /**
- * Git panel host service: a small REST surface over the repository the host
- * process is running in. Executes `git` through `execFile` with array
- * arguments (no shell), so user-supplied paths and messages never reach a
- * shell. Exposed routes (all under `/git`, registered by the plugin apply):
+ * Git panel host service: a small REST surface over a workspace repository.
+ * Executes `git` through `execFile` with array arguments (no shell), so
+ * user-supplied paths and messages never reach a shell. Exposed routes (all
+ * under `/git`, registered by the plugin apply):
  *
- *  - `GET  /git/status`          → branch + working-tree status (porcelain).
- *  - `GET  /git/log?n=<count>`   → recent commit one-liners.
- *  - `POST /git/commit` {message}→ `git add -A` + `git commit -m <message>`.
- *  - `POST /git/push`            → `git push`.
- *  - `POST /git/diff` {path}     → `git diff -- <path>` (working tree).
+ *  - `GET  /git/status?cwd=<path>`      → branch + working-tree status.
+ *  - `GET  /git/log?cwd=<path>&n=<n>`   → recent commit one-liners.
+ *  - `POST /git/commit` {cwd, message}  → `git add -A` + `git commit -m`.
+ *  - `POST /git/push` {cwd}             → `git push`.
+ *  - `POST /git/diff` {cwd, path}       → `git diff -- <path>`.
  *
- * The cwd is the host process's working directory (the harness checkout for a
- * local `dsh web` run). Responses are JSON; errors carry an `error` field.
+ * The target directory is chosen per request from `cwd`, which the host
+ * resolves against its known workspace paths — an unknown directory is
+ * rejected, so the surface can never be pointed at an arbitrary path.
+ * Responses are JSON; errors carry an `error` field.
  */
 
 import { execFile } from 'node:child_process'
@@ -38,6 +40,31 @@ export interface GitStatusResult {
 /** Response of `GET /git/log`. */
 export interface GitLogResult {
   readonly commits: readonly string[]
+}
+
+/** Resolve a requested cwd against the host's known workspace paths. */
+export type GitCwdResolver = (requested: string) => string
+
+/**
+ * Default resolver: only an exact match against a known workspace path is
+ * accepted; everything else falls back to the host process cwd (the harness
+ * checkout for a local `dsh web` run).
+ * @param known - the host's current workspace paths.
+ * @param fallback - host process cwd.
+ * @returns the resolver.
+ */
+export function workspaceCwdResolver(known: readonly string[], fallback: string): GitCwdResolver {
+  const normalized = new Set(known.map(path => normalizeSlashes(path)))
+  return (requested) => {
+    if (requested.length === 0) return fallback
+    const value = normalizeSlashes(requested)
+    return normalized.has(value) ? value : fallback
+  }
+}
+
+/** Normalize Windows separators so path matching is robust. */
+function normalizeSlashes(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '')
 }
 
 /** Write a JSON response with the given status code. */
@@ -81,16 +108,22 @@ function bodyPath(body: Record<string, unknown>, field: string): string {
 
 /**
  * The git panel route handler: one prefix route owning every `/git` endpoint.
- * @param cwd - repository directory (the host process's working directory).
+ * @param resolveCwd - resolves the requested cwd against known workspaces.
  * @param req - incoming HTTP request.
  * @param res - server response.
  */
-export async function handleGitRequest(cwd: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+export async function handleGitRequest(
+  resolveCwd: GitCwdResolver,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://git-panel')
   const path = url.pathname
   const method = req.method ?? 'GET'
+  const queryCwd = url.searchParams.get('cwd') ?? ''
   try {
     if (method === 'GET' && path === '/git/status') {
+      const cwd = resolveCwd(queryCwd)
       const branch = await run('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd })
         .then(out => out.stdout.trim())
         .catch(() => '')
@@ -108,6 +141,7 @@ export async function handleGitRequest(cwd: string, req: IncomingMessage, res: S
     }
 
     if (method === 'GET' && path === '/git/log') {
+      const cwd = resolveCwd(queryCwd)
       const n = Number(url.searchParams.get('n') ?? 10)
       const count = Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 100) : 10
       const out = await run('git', ['log', `-n${count}`, '--oneline'], { cwd })
@@ -117,6 +151,7 @@ export async function handleGitRequest(cwd: string, req: IncomingMessage, res: S
 
     if (method === 'POST' && path === '/git/commit') {
       const body = await readJson(req)
+      const cwd = resolveCwd(bodyPath(body, 'cwd'))
       const message = bodyPath(body, 'message')
       if (message.length > 4_096) throw new Error('git panel: commit message too long')
       await run('git', ['add', '-A'], { cwd })
@@ -126,6 +161,8 @@ export async function handleGitRequest(cwd: string, req: IncomingMessage, res: S
     }
 
     if (method === 'POST' && path === '/git/push') {
+      const body = await readJson(req)
+      const cwd = resolveCwd(bodyPath(body, 'cwd'))
       await run('git', ['push'], { cwd })
       json(res, 200, { ok: true })
       return
@@ -133,6 +170,7 @@ export async function handleGitRequest(cwd: string, req: IncomingMessage, res: S
 
     if (method === 'POST' && path === '/git/diff') {
       const body = await readJson(req)
+      const cwd = resolveCwd(bodyPath(body, 'cwd'))
       const filePath = bodyPath(body, 'path')
       // A repository-relative path must not escape the repo.
       if (filePath.includes('..') || filePath.startsWith('/') || filePath.includes('\\')) {

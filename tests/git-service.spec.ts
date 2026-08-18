@@ -1,6 +1,9 @@
-/** Git panel host service: route dispatch, body parsing, and path validation. */
+/** Git panel host service: route dispatch, cwd resolution, and path validation. */
 import { describe, expect, it } from 'vitest'
-import { handleGitRequest } from '../src/git-service.ts'
+import { handleGitRequest, workspaceCwdResolver } from '../src/git-service.ts'
+
+/** Resolver used by every test: only the host cwd is a known workspace. */
+const resolve = workspaceCwdResolver([process.cwd()], process.cwd())
 
 /** In-memory response double capturing status and JSON body (getters are live). */
 function responseDouble() {
@@ -28,10 +31,21 @@ function requestDouble(path: string, method: string, body?: unknown) {
   }
 }
 
+describe('workspaceCwdResolver', () => {
+  it('accepts known workspace paths and falls back for unknown ones', () => {
+    const r = workspaceCwdResolver(['D:/repo-a', 'D:/repo-b'], 'D:/fallback')
+    expect(r('D:/repo-a')).toBe('D:/repo-a')
+    expect(r('D:/repo-b')).toBe('D:/repo-b')
+    expect(r('D:/repo-a/')).toBe('D:/repo-a')
+    expect(r('D:/unknown')).toBe('D:/fallback')
+    expect(r('')).toBe('D:/fallback')
+  })
+})
+
 describe('git panel host service', () => {
   it('rejects unknown routes with 404', async () => {
     const double = responseDouble()
-    await handleGitRequest(process.cwd(), requestDouble('/git/nope', 'GET') as never, double.res as never)
+    await handleGitRequest(resolve, requestDouble('/git/nope?cwd=' + encodeURIComponent(process.cwd()), 'GET') as never, double.res as never)
     expect(double.status).toBe(404)
     expect(double.body.error).toContain('unknown route')
   })
@@ -46,7 +60,7 @@ describe('git panel host service', () => {
         if (event === 'end') fn()
       },
     }
-    await handleGitRequest(process.cwd(), req as never, double.res as never)
+    await handleGitRequest(resolve, req as never, double.res as never)
     expect(double.status).toBe(500)
     expect(double.body.error).toContain('JSON body must be an object')
   })
@@ -54,8 +68,8 @@ describe('git panel host service', () => {
   it('rejects commit messages that are not strings', async () => {
     const double = responseDouble()
     await handleGitRequest(
-      process.cwd(),
-      requestDouble('/git/commit', 'POST', { message: 42 }) as never,
+      resolve,
+      requestDouble('/git/commit', 'POST', { cwd: process.cwd(), message: 42 }) as never,
       double.res as never,
     )
     expect(double.status).toBe(500)
@@ -66,8 +80,8 @@ describe('git panel host service', () => {
     for (const bad of ['../outside', '/etc/passwd', 'sub\\..\\escape']) {
       const double = responseDouble()
       await handleGitRequest(
-        process.cwd(),
-        requestDouble('/git/diff', 'POST', { path: bad }) as never,
+        resolve,
+        requestDouble('/git/diff', 'POST', { cwd: process.cwd(), path: bad }) as never,
         double.res as never,
       )
       expect(double.status).toBe(500)
@@ -75,12 +89,27 @@ describe('git panel host service', () => {
     }
   })
 
-  it('serves /git/status as JSON', async () => {
+  it('serves /git/status as JSON for a known workspace', async () => {
     const double = responseDouble()
-    await handleGitRequest(process.cwd(), requestDouble('/git/status', 'GET') as never, double.res as never)
+    await handleGitRequest(
+      resolve,
+      requestDouble('/git/status?cwd=' + encodeURIComponent(process.cwd()), 'GET') as never,
+      double.res as never,
+    )
     expect(double.status).toBe(200)
     expect(double.body).toHaveProperty('branch')
     expect(double.body).toHaveProperty('entries')
     expect(double.body).toHaveProperty('isRepo')
+  })
+
+  it('requires cwd on mutating routes', async () => {
+    const double = responseDouble()
+    await handleGitRequest(
+      resolve,
+      requestDouble('/git/push', 'POST', {}) as never,
+      double.res as never,
+    )
+    expect(double.status).toBe(500)
+    expect(double.body.error).toContain('non-empty string')
   })
 })

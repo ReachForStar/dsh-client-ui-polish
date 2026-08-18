@@ -7,7 +7,7 @@
 - **整个应用背景图片。** 插件拥有自己的 `ui-polish` 设置命名空间（data URL，上限 2MB），并把图片绘制到 body（`cover`／固定／居中），在文档上标记 `data-ds-bg-image`。它注入的全局样式表在该属性生效时把基础 token（`--dsw-alias-bg-base`、`--dsw-specific-sidebar-fill`）覆盖为透明，因此结构性表面——应用框架、对话区、详情列与侧边栏——全部让位于图片；需要对比度的内容元素（卡片、代码块、按钮）保留自身填充。「通用」设置区的那一行负责上传（含大小与类型校验）、预览与移除图片。
 - **带费用的会话统计浮窗。** 一个 `conversation.composer.dock` 条目以 `position: fixed` 钉在视口右上角，展示持久的 `sessionStats` 与 `tokenUsage` 投影数字（未组合前者时回退到窗口折叠），并附加**按模型计价**的估算花费：每条落定的助手步骤按其所属模型的单价计费，价格来自可编辑的价目表文件 `src/client/model-pricing.json`（元／百万 token，由 amaxsmp 网关定价一次性转换而来），悬停显示各桶拆分。未知模型与无法归属节点用量的会话回退到 `default` 价目卡（deepseek-v4-flash：输入 1.5、输出 4.5、缓存读取 0.05）；修改该 JSON 后重新构建即可更新价格。
 - **悬浮文件修改 diff 面板。** 第二个 `conversation.composer.dock` 条目监听会话中刚落定的 write/edit 调用（落定结果携带 `card: 'diff'` 渲染意图），把最新应用后的变更绘制在右侧固定面板。打开会话时吸收历史，因此重载后保持安静；关闭按钮可收起面板，直到下一次修改出现。
-- **Git 操作面板。** 第三个 `conversation.composer.dock` 条目可切换出一个固定面板，操作宿主进程所在仓库：当前分支、工作区变更（含单文件 diff）、提交框（`add -A` + commit）与推送动作。node 半侧在宿主 webserver 上注册 `/git/*` 路由，并用 `execFile` 数组参数执行 `git`（不经 shell），因此路径与提交信息永远不会进入 shell；浏览器半侧是纯 fetch 客户端。含 `..` 或路径分隔符的路径会被拒绝，非 Git 仓库目录显示安静的提示。
+- **Git 操作面板。** 第三个 `conversation.composer.dock` 条目在右下角切换出一个固定面板，并跟随浏览器当前查看的工作区：当前分支、工作区变更（含单文件 diff）、提交框（`add -A` + commit）与推送动作。node 半侧在宿主 webserver 上注册 `/git/*` 路由，把每个请求的 `cwd` 对照实时工作区注册表解析（切换工作区即切换仓库，无需重启），并用 `execFile` 数组参数执行 `git`（不经 shell），因此路径与提交信息永远不会进入 shell；浏览器半侧是携带当前工作区路径的纯 fetch 客户端。含 `..` 或路径分隔符的路径会被拒绝，未知 cwd 回退到宿主进程目录，非 Git 仓库目录显示安静的提示。
 
 `/client` 导出为插件主体（`apply`／`inject`）、组件 props 类型与注入的背景写入面类型。
 
