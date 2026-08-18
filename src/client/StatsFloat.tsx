@@ -196,7 +196,11 @@ export const StatsFloat = memo(function StatsFloat({ useSession, useProjection, 
     ? usage
     : undefined
   const nodeBill = byModel.size > 0 ? sumUsageByModel(byModel) : null
-  let costDisplay: { label: string; detail: ReturnType<typeof costBreakdown> } | null = null
+  let costDisplay: {
+    label: string
+    detail: ReturnType<typeof costBreakdown>
+    models: { model: string; cost: string }[]
+  } | null = null
   if (nodeBill !== null || bill !== undefined) {
     const label = nodeBill !== null
       ? formatCost([...byModel].reduce(
@@ -218,7 +222,10 @@ export const StatsFloat = memo(function StatsFloat({ useSession, useProjection, 
           { input: 0, cache: 0, output: 0 },
         )
         : costBreakdown(bill!)
-      costDisplay = { label, detail }
+      const models = nodeBill !== null
+        ? [...byModel].map(([model, usage]) => ({ model, cost: formatCost(estimateCost(usage, model)) }))
+        : []
+      costDisplay = { label, detail, models }
     }
   }
   if (groups.length === 0 && costDisplay === null) return null
@@ -243,7 +250,18 @@ export const StatsFloat = memo(function StatsFloat({ useSession, useProjection, 
           })}
           side="top"
         >
-          <span className={css.cost}>{t('stats.cost', { cost: costDisplay.label })}</span>
+          <span className={css.cost}>
+            {t('stats.cost', { cost: costDisplay.label })}
+            {costDisplay.models.length > 0 && (
+              <span className={css.costModels}>
+                {t('stats.costModels', {
+                  models: costDisplay.models
+                    .map(entry => `${entry.model} ${entry.cost}`)
+                    .join(' · '),
+                })}
+              </span>
+            )}
+          </span>
         </Tooltip>
       )}
     </div>

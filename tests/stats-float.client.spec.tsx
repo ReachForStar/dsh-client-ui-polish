@@ -126,6 +126,8 @@ describe('StatsFloat', () => {
       sessionStats: sessionStats({ turns: 2, steps: 2 }),
     })} />)
     expect(view.container.textContent).toContain('费用 ¥6.00')
+    // The cost row breaks the total down per model.
+    expect(view.container.textContent).toContain('模型 deepseek-v4-flash ¥1.50 · deepseek-v4-pro ¥4.50')
   })
 
   it('falls back to the default card when no settled node carries model usage', () => {
@@ -140,6 +142,8 @@ describe('StatsFloat', () => {
     })} />)
     // No provenance → projection at the default card: ¥1.50.
     expect(view.container.textContent).toContain('费用 ¥1.50')
+    // No model attribution → no per-model breakdown row.
+    expect(view.container.textContent).not.toContain('模型 ')
   })
 
   it('renders nothing when there are no steps and no billed activity', () => {

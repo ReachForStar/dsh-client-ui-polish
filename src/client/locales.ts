@@ -12,6 +12,7 @@ export const zh = {
   'stats.tokens': '输入 {input} tok · 输出 {output} tok',
   'stats.cost': '费用 {cost}',
   'stats.costDetail': '输入 {input} · 缓存命中 {cache} · 输出 {output}',
+  'stats.costModels': '模型 {models}',
   // Background image row.
   'background.title': '背景图片',
   'background.upload': '上传图片',
@@ -37,6 +38,7 @@ export const en = {
   'stats.tokens': 'Input {input} tok · Output {output} tok',
   'stats.cost': 'Cost {cost}',
   'stats.costDetail': 'Input {input} · Cache hit {cache} · Output {output}',
+  'stats.costModels': 'Models {models}',
   'background.title': 'Background image',
   'background.upload': 'Upload image',
   'background.remove': 'Remove',
