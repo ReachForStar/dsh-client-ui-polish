@@ -1,0 +1,114 @@
+/**
+ * ui-polish browser half: three standalone GUI enhancements that need no core
+ * package changes —
+ *  - whole-app background image (own settings namespace, own body painting,
+ *    token-override transparency for the structural surfaces),
+ *  - a session stats float with an estimated cost (a composer.dock entry that
+ *    pins itself to the viewport's top-right via position:fixed),
+ *  - a floating file-mutation diff panel (a composer.dock entry that watches
+ *    the session for newly settled write/edit calls and draws the applied
+ *    change at the right edge).
+ */
+import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+// Type-only: pulls the settings scope Context merge (ctx.settingsScope).
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+// Type-only: pulls the ui-settings-general SlotMap merge (the settings.general.item entry).
+import type {} from '@deepseek-ai/dsh-client-ui-settings-general/client'
+// Type-only: pulls the locale plugin's Context merge (ctx.locale).
+import type {} from '@deepseek-ai/dsh-client-locale/client'
+// Type-only: pulls the ui-conversation SlotMap merge (the composer.dock entry).
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import { BACKGROUND_SETTINGS_NAMESPACE, type PolishSettings } from '../background-settings.ts'
+import { BackgroundRuntime } from './background-runtime.ts'
+import { BackgroundRow, type BackgroundRowInjected } from './BackgroundRow.tsx'
+import { createBackgroundRowStore } from './settings-store.ts'
+import { StatsFloat } from './StatsFloat.tsx'
+import { MutationDiffPanel } from './MutationDiffPanel.tsx'
+import { en, zh, type PolishKey } from './locales.ts'
+
+export type { BackgroundRowComponentProps, BackgroundRowInjected } from './BackgroundRow.tsx'
+export type { BackgroundRowState } from './settings-store.ts'
+export type { PolishKey } from './locales.ts'
+export type { PolishSettings } from '../background-settings.ts'
+
+/** Namespace owning this plugin's copy. */
+export const NS = 'ui-polish'
+
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface LocaleNamespaceMap {
+    /** The ui-polish surface's copy. */
+    'ui-polish': PolishKey
+  }
+}
+
+/**
+ * Structural surfaces turn transparent while the whole-app background image is
+ * active: overriding the base tokens makes every surface that paints them
+ * (the app frame, conversation, details, and sidebar columns) yield to the
+ * body-painted image. Content elements that need contrast (cards, code blocks,
+ * buttons) keep their own non-base fills; this is the standalone plugin's
+ * reach without touching core stylesheets.
+ */
+const AMBIENT_OVERRIDES = `
+body[data-ds-bg-image] {
+  --dsw-alias-bg-base: transparent;
+  --dsw-specific-sidebar-fill: transparent;
+}
+`
+
+/** Required services: settings transport plus slots/locale for the registrations. */
+export const inject = ['slots', 'locale', 'connection', 'remote', 'settingsScope']
+
+/**
+ * Client plugin body: bind the background preference, paint the body, and
+ * register the three surface contributions.
+ * @param ctx - client cordis context.
+ */
+export function apply(ctx: ClientContext): void {
+  const host = ctx.settingsScope.bind<PolishSettings>({ namespace: BACKGROUND_SETTINGS_NAMESPACE })
+  const background = new BackgroundRuntime(ctx, host)
+
+  // Global token overrides plus body-write retraction, both owned by this fiber.
+  ctx.effect(() => {
+    const style = document.createElement('style')
+    style.dataset.uiPolishAmbient = ''
+    style.textContent = AMBIENT_OVERRIDES
+    document.head.append(style)
+    return () => { style.remove() }
+  }, 'ui-polish: ambient background overrides')
+  ctx.effect(() => () => { background.dispose() }, 'ui-polish: background dispose')
+
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-polish: dictionaries')
+
+  const store = createBackgroundRowStore()
+  let bound: BoundActions<typeof store> | undefined
+  let revision = 0
+  const sync = (): void => {
+    revision += 1
+    bound?.sync(background.getBackgroundImage(), revision)
+  }
+  ctx.effect(() => background.subscribe(sync), 'ui-polish: background row sync')
+  const injected = (actions: BoundActions<typeof store>): BackgroundRowInjected => {
+    bound = actions
+    // Re-sync from the getter so no change is lost between registration and
+    // first render (the store's revision guard drops stale duplicates).
+    sync()
+    return {
+      setBackgroundImage: (dataUrl) => { background.setBackgroundImage(dataUrl) },
+    }
+  }
+  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+    name: 'settings.general.item',
+    id: 'polish-background',
+    order: 30,
+    store,
+    locale: NS,
+    inject: injected,
+  }, BackgroundRow))
+
+  ctx.slots.inject('conversation.composer.dock', function* () {
+    yield ctx.slots.register({ name: 'conversation.composer.dock', id: 'polish-stats', order: 0, locale: NS }, StatsFloat)
+    yield ctx.slots.register({ name: 'conversation.composer.dock', id: 'polish-diff', order: 10, locale: NS }, MutationDiffPanel)
+  })
+}
