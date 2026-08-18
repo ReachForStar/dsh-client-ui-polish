@@ -22,7 +22,7 @@
     "noUnusedParameters": true,
     "jsx": "react-jsx",
     "lib": ["ES2024", "DOM", "DOM.Iterable"],
-    "types": [],
+    "types": ["node"],
     "rootDir": "src",
     "outDir": "lib/types"
   },

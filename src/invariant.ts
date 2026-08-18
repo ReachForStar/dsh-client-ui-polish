@@ -15,7 +15,7 @@ export const name = 'client-ui-polish-invariant'
 export const inject = ['invariants']
 
 /**
- * No runtime invariant: the plugin owns a settings namespace and three slot
+ * No runtime invariant: the plugin owns a settings namespace and four slot
  * registrations whose disposal is proven by the HMR-safety spec, and its body
  * painter retracts every DOM write on dispose — it emits no cordis events and
  * holds no cross-plugin mutable state.

@@ -1,10 +1,12 @@
 /**
- * ui-polish browser half: three standalone GUI enhancements that need no core
+ * ui-polish browser half: four standalone GUI enhancements that need no core
  * package changes —
  *  - whole-app background image (own settings namespace, own body painting,
  *    token-override transparency for the structural surfaces),
  *  - a session stats float with an estimated cost (a composer.dock entry that
  *    pins itself to the viewport's top-right via position:fixed),
+ *  - a floating git panel over the host repository (a composer.dock entry that
+ *    talks to /git/* routes registered by the node half),
  *  - a floating file-mutation diff panel (a composer.dock entry that watches
  *    the session for newly settled write/edit calls and draws the applied
  *    change at the right edge).
@@ -25,6 +27,7 @@ import { BackgroundRow, type BackgroundRowInjected } from './BackgroundRow.tsx'
 import { createBackgroundRowStore } from './settings-store.ts'
 import { createModelIndex, modelIndexDefinition, type ModelIndex } from './model-index.ts'
 import { StatsFloat } from './StatsFloat.tsx'
+import { GitPanel } from './GitPanel.tsx'
 import { MutationDiffPanel } from './MutationDiffPanel.tsx'
 import { en, zh, type PolishKey } from './locales.ts'
 
@@ -56,11 +59,11 @@ body[data-ds-bg-image] {
   --dsw-alias-bg-base: transparent;
   --dsw-specific-sidebar-fill: transparent;
 }
-/* This plugin owns the composer.dock readout: its floating stats and diff
-   panels carry data-ui-polish-* markers, so every other dock entry (the
-   core's under-composer stats band) is hidden to avoid duplicating the
+/* This plugin owns the composer.dock readout: its floating stats, git panel,
+   and diff panels carry data-ui-polish-* markers, so every other dock entry
+   (the core's under-composer stats band) is hidden to avoid duplicating the
    session readout. */
-[data-slot="conversation.composer.dock"] > *:not([data-ui-polish-stats]):not([data-ui-polish-diff]) {
+[data-slot="conversation.composer.dock"] > *:not([data-ui-polish-stats]):not([data-ui-polish-diff]):not([data-ui-polish-git]) {
   display: none;
 }
 `
@@ -136,6 +139,7 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: (): { modelOf: ModelIndex['modelOf'] } => ({ modelOf: modelIndex.modelOf }),
     }, StatsFloat)
+    yield ctx.slots.register({ name: 'conversation.composer.dock', id: 'polish-git', order: 5, locale: NS }, GitPanel)
     yield ctx.slots.register({ name: 'conversation.composer.dock', id: 'polish-diff', order: 10, locale: NS }, MutationDiffPanel)
   })
 }
