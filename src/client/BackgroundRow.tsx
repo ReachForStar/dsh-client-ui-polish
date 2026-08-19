@@ -28,7 +28,7 @@ export type BackgroundRowComponentProps =
 export function BackgroundRow({ t, setBackgroundImage, useStore }: BackgroundRowComponentProps) {
   const backgroundImage = useStore(s => s.backgroundImage)
   const fileInput = useRef<HTMLInputElement | null>(null)
-  const [error, setError] = useState<PolishKey | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const onFile = (file: File | undefined): void => {
     setError(null)
@@ -41,12 +41,31 @@ export function BackgroundRow({ t, setBackgroundImage, useStore }: BackgroundRow
       setError('background.tooLarge')
       return
     }
-    const reader = new FileReader()
-    reader.onload = () => {
-      /* v8 ignore next -- readAsDataURL resolves a string on success; the non-string arm guards a transport error the harness cannot produce */
-      if (typeof reader.result === 'string') setBackgroundImage(reader.result)
+    // Upload the raw file to the host (persisted on disk, not as base64),
+    // then store the served URL in settings.
+    const upload = async (): Promise<void> => {
+      try {
+        const response = await fetch('/bg/upload', { method: 'POST', body: file })
+        const body = await response.json().catch(() => ({})) as Record<string, unknown>
+        if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${response.status}`)
+        const url = body['url']
+        if (typeof url !== 'string') throw new Error('background: upload returned no url')
+        setBackgroundImage(url)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'background.uploadFailed')
+      }
     }
-    reader.readAsDataURL(file)
+    void upload()
+  }
+
+  const remove = async (): Promise<void> => {
+    setError(null)
+    try {
+      await fetch('/bg', { method: 'DELETE' })
+    } catch {
+      // File deletion is best-effort; the settings clear still applies.
+    }
+    setBackgroundImage(null)
   }
 
   return (
@@ -58,7 +77,7 @@ export function BackgroundRow({ t, setBackgroundImage, useStore }: BackgroundRow
           {t('background.upload')}
         </button>
         {backgroundImage !== null && (
-          <button type="button" className={css.action} onClick={() => { setBackgroundImage(null) }}>
+          <button type="button" className={css.action} onClick={() => { void remove() }}>
             {t('background.remove')}
           </button>
         )}
@@ -74,7 +93,11 @@ export function BackgroundRow({ t, setBackgroundImage, useStore }: BackgroundRow
           }}
         />
       </div>
-      {error !== null && <div className={css.error}>{t(error)}</div>}
+      {error !== null && (
+        <div className={css.error}>
+          {error.startsWith('background.') ? t(error as PolishKey) : error}
+        </div>
+      )}
     </div>
   )
 }

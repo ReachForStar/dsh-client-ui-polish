@@ -2,13 +2,15 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 // Type-only: pulls the webserver Context merge (ctx.webServer).
 import type {} from '@deepseek-ai/dsh-host-webserver'
 // Type-only: pulls the workspace registry Context merge (ctx.workspaceRegistry).
 import type {} from '@deepseek-ai/dsh-workspace'
 import {
-  BACKGROUND_SETTINGS_NAMESPACE, PolishSettingsSchema,
+  BACKGROUND_SETTINGS_NAMESPACE, MAX_BACKGROUND_IMAGE_BYTES, PolishSettingsSchema,
 } from './background-settings.ts'
+import { BACKGROUND_IMAGE_FILE, handleBackgroundRequest } from './background-service.ts'
 import { installCompactionControl } from './compaction-control.ts'
 import { handleGitRequest, workspaceCwdResolver } from './git-service.ts'
 
@@ -16,12 +18,16 @@ export {
   BACKGROUND_IMAGE_FIELD, BACKGROUND_SETTINGS_NAMESPACE, MAX_BACKGROUND_IMAGE_BYTES,
   type PolishSettings,
 } from './background-settings.ts'
+export { handleBackgroundRequest, BACKGROUND_IMAGE_FILE } from './background-service.ts'
 export { handleGitRequest, workspaceCwdResolver, type GitCwdResolver, type GitLogResult, type GitStatusEntry, type GitStatusResult } from './git-service.ts'
 
 const NAMESPACE = settingsNamespace(BACKGROUND_SETTINGS_NAMESPACE)
 
 /** Host process working directory: the fallback repository when no workspace matches. */
 const FALLBACK_CWD = process.cwd()
+
+/** Absolute path of the persisted background image (profile dir; survives restarts). */
+const BACKGROUND_IMAGE_PATH = dshHomePath('profiles', 'web', BACKGROUND_IMAGE_FILE)
 
 /**
  * Register the durable background section and the git panel HTTP surface when
@@ -50,5 +56,11 @@ export function apply(ctx: Context): void {
         return handleGitRequest(resolveCwd, req, res)
       },
     }), 'ui-polish: git panel route')
+    // Background image: persisted as a file, served at /bg/current.
+    serverCtx.effect(() => webServer.register({
+      kind: 'prefix',
+      path: '/bg',
+      handler: (req, res) => handleBackgroundRequest(BACKGROUND_IMAGE_PATH, MAX_BACKGROUND_IMAGE_BYTES, req, res),
+    }), 'ui-polish: background image route')
   })
 }

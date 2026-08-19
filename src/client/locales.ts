@@ -33,6 +33,7 @@ export const zh = {
   'background.remove': '移除',
   'background.tooLarge': '图片过大，请选择不超过 2MB 的图片',
   'background.notImage': '请选择图片文件',
+  'background.uploadFailed': '上传失败，请重试',
   // Automatic compaction threshold row.
   'compaction.title': '自动压缩上下文',
   'compaction.saved': '已保存',
@@ -79,6 +80,7 @@ export const en = {
   'background.remove': 'Remove',
   'background.tooLarge': 'Image is too large; choose one under 2MB',
   'background.notImage': 'Choose an image file',
+  'background.uploadFailed': 'Upload failed; please retry',
   'compaction.title': 'Auto-compact context',
   'compaction.saved': 'Saved',
   'compaction.hint': 'Compacts automatically when context usage reaches the selected ratio. Unset uses the 80% default.',
