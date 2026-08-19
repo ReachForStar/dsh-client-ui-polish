@@ -1,18 +1,19 @@
-/* Session stats float: pinned to the viewport's top-right via position:fixed,
-   so it overlays the conversation without any core layout change. The dock
-   only mounts while a session is active, which is when the readout matters. */
+/* Session stats float: pinned to the viewport's bottom-right via position:fixed,
+   so it never overlaps the conversation header or input. The dock only mounts
+   while a session is active, which is when the readout matters. Default state is
+   a compact capsule showing just the cost; clicking it expands the full readout. */
 
 .root {
   position: fixed;
-  top: 12px;
-  right: 32px;
+  right: 16px;
+  bottom: 16px;
   z-index: 30;
   display: block;
   box-sizing: border-box;
-  max-width: min(100vw - 64px, 560px);
-  padding: 8px 12px;
+  max-width: min(100vw - 32px, 560px);
+  padding: 6px 12px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 12px;
+  border-radius: 999px;
   background: var(--dsw-alias-button-floating-fill);
   box-shadow: var(--dsw-shadow-lv2);
   font-size: 12px;
@@ -20,6 +21,29 @@
   color: var(--dsw-alias-label-tertiary);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.85;
+  transition: opacity 120ms ease;
+}
+
+.root:hover {
+  opacity: 1;
+}
+
+/* Expanded state: square corners, full width content. */
+.root[data-expanded='true'] {
+  border-radius: 12px;
+}
+
+/* Collapsed capsule label: the single cost figure. */
+.costInline {
+  display: inline-block;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
 }
 
 .line {

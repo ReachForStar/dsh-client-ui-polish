@@ -233,9 +233,15 @@ export async function handleGitRequest(
         .filter(entry => !entry.name.startsWith('.git'))
         .map(async (entry) => {
           let type: 'dir' | 'file'
+          let size: number | null = null
+          let modifiedMs: number | null = null
           try {
             const info = await stat(join(abs, entry.name))
             type = info.isDirectory() ? 'dir' : 'file'
+            if (type === 'file') {
+              size = info.size
+              modifiedMs = info.mtimeMs
+            }
           } catch {
             type = 'file'
           }
@@ -243,6 +249,8 @@ export async function handleGitRequest(
             name: entry.name,
             type,
             path: dirPath === '' ? entry.name : `${dirPath}/${entry.name}`,
+            size,
+            modifiedMs,
           }
         }))
       // Directories first, then files, each alphabetical.

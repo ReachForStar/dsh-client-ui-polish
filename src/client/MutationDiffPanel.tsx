@@ -18,6 +18,32 @@ interface DirEntry {
   name: string
   type: 'dir' | 'file'
   path: string
+  /** File size in bytes (directories carry null). */
+  size: number | null
+  /** File modification time as Unix epoch ms (directories carry null). */
+  modifiedMs: number | null
+}
+
+/** Human-readable file size: 512B / 4.2KB / 1.1MB (one decimal under ten). */
+function formatSize(bytes: number): string {
+  if (bytes < 1_024) return `${bytes}B`
+  if (bytes < 1_024 * 1_024) return `${Math.round(bytes / 1_024 * 10) / 10}KB`
+  return `${Math.round(bytes / (1_024 * 1_024) * 10) / 10}MB`
+}
+
+/** Human-readable modification time: HH:MM today, MM-DD HH:MM this year, YYYY-MM-DD otherwise. */
+function formatModified(ms: number): string {
+  const date = new Date(ms)
+  const now = new Date()
+  const sameDay = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate()
+  if (sameDay) return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  if (date.getFullYear() === now.getFullYear()) {
+    return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} `
+      + `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  }
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
 /** The workspace path owning the current session, if any. */
@@ -147,16 +173,36 @@ export function MutationDiffPanel({ useSession, useWorkspaces, t }: MutationDiff
           onClick={() => { void openFile(entry.path) }}
         >
           <span className={css.filePath}>{entry.name}</span>
+          {entry.size !== null && (
+            <span className={css.fileMeta}>
+              {formatSize(entry.size)}
+              {entry.modifiedMs !== null && ` · ${formatModified(entry.modifiedMs)}`}
+            </span>
+          )}
         </button>
       </li>
     )
   }
+
+  /** Reload the workspace root listing. */
+  const refresh = useCallback((): void => {
+    if (cwd === undefined) return
+    setError(null)
+    gitFetch<{ items: DirEntry[] }>('/git/list', cwd, { method: 'POST', body: JSON.stringify({}) })
+      .then(result => setRootItems(result.items))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }, [cwd])
 
   return (
     <div className={css.view} data-ui-polish-diff="">
       <div className={css.viewHeader}>
         <span className={css.title}>{t('diff.title')}</span>
         {cwd !== undefined && <span className={css.cwd}>{cwd}</span>}
+        {cwd !== undefined && (
+          <button type="button" className={css.refresh} onClick={() => { void refresh() }}>
+            {t('diff.refresh')}
+          </button>
+        )}
       </div>
       {cwd === undefined
         ? <div className={css.notice}>{t('git.noWorkspace')}</div>

@@ -102,6 +102,25 @@
   cursor: pointer;
 }
 
+.fileMeta {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+.refresh {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-button-floating-fill);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .fileStatus {
   flex: none;
   font-size: 11px;

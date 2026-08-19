@@ -13,6 +13,7 @@ export const zh = {
   'stats.cost': '费用 {cost}',
   'stats.costDetail': '输入 {input} · 缓存命中 {cache} · 输出 {output}',
   'stats.costModels': '模型 {models}',
+  'stats.expand': '展开会话统计',
   // Excalidraw canvas tab.
   'excalidraw.title': '画布',
   'excalidraw.saving': '保存中…',
@@ -44,10 +45,11 @@ export const zh = {
   // File panel (conversation.view tab).
   'diff.tab': '文件',
   'diff.title': '文件面板',
-  'diff.empty': '会话中还没有工具操作的文件',
+  'diff.empty': '工作区为空',
   'diff.select': '选择一个文件查看并编辑',
   'diff.save': '保存',
   'diff.close': '关闭',
+  'diff.refresh': '刷新',
 } satisfies Record<string, string>
 
 /** The ui-polish namespace key union. */
@@ -65,6 +67,7 @@ export const en = {
   'stats.cost': 'Cost {cost}',
   'stats.costDetail': 'Input {input} · Cache hit {cache} · Output {output}',
   'stats.costModels': 'Models {models}',
+  'stats.expand': 'Expand session stats',
   'excalidraw.title': 'Canvas',
   'excalidraw.saving': 'Saving…',
   'git.tab': 'Git',
@@ -91,8 +94,9 @@ export const en = {
   'compaction.hint': 'Compacts automatically when context usage reaches the selected ratio. Unset uses the 80% default.',
   'diff.tab': 'Files',
   'diff.title': 'File panel',
-  'diff.empty': 'No tool-operated files in this session yet',
+  'diff.empty': 'Workspace is empty',
   'diff.select': 'Select a file to view and edit',
   'diff.save': 'Save',
   'diff.close': 'Close',
+  'diff.refresh': 'Refresh',
 } satisfies Record<PolishKey, string>

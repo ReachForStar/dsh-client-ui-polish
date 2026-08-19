@@ -1,10 +1,11 @@
 // Session stats float: a composer.dock contribution that positions itself
-// with `position: fixed` at the viewport's top-right, so it floats over the
-// conversation without any core layout change. Durable figures ride the
-// sessionStats and tokenUsage projections (the window fold below is only the
-// fallback for assemblies without the sessionStats unit).
+// with `position: fixed` at the viewport's bottom-right, so it never overlaps
+// the conversation header or input. Durable figures ride the sessionStats and
+// tokenUsage projections (the window fold below is only the fallback for
+// assemblies without the sessionStats unit). Collapsed by default to a compact
+// cost capsule; clicking expands the full readout.
 
-import { Fragment, memo, useMemo } from 'react'
+import { Fragment, memo, useMemo, useState } from 'react'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ConversationSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: merges the sessionStats key into SessionProjectionMap for useProjection.
@@ -151,6 +152,7 @@ export type StatsFloatProps = PropsRuntime<'conversation.composer.dock'> & Props
 }
 
 export const StatsFloat = memo(function StatsFloat({ useSession, useProjection, t, modelOf }: StatsFloatProps) {
+  const [expanded, setExpanded] = useState(false)
   const settledNodes = useSession(s => s.chat.legacy.nodes)
   const usage = useProjection('tokenUsage')
   const projected = useProjection('sessionStats')
@@ -205,41 +207,66 @@ export const StatsFloat = memo(function StatsFloat({ useSession, useProjection, 
   }
   if (groups.length === 0 && costDisplay === null) return null
   return (
-    <div className={css.root} data-ui-polish-stats="">
-      {groups.length > 0 && (
-        <div className={css.line}>
-          {groups.map((group, i) => (
-            <Fragment key={group}>
-              {i > 0 && <><span className={css.sep} aria-hidden>|</span>{' '}</>}
-              <span>{group}</span>
-            </Fragment>
-          ))}
-        </div>
+    <div
+      className={css.root}
+      data-ui-polish-stats=""
+      data-expanded={expanded}
+      role="button"
+      tabIndex={0}
+      title={expanded ? undefined : t('stats.expand')}
+      onClick={() => { setExpanded(value => !value) }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          setExpanded(value => !value)
+        }
+      }}
+    >
+      {/* Collapsed: a single line with the total cost (the figure users glance at). */}
+      {!expanded && costDisplay !== null && (
+        <span className={css.costInline}>{t('stats.cost', { cost: costDisplay.label })}</span>
       )}
-      {costDisplay !== null && (
-        <div className={css.cost}>
-          <span className={css.costTotal}>{t('stats.cost', { cost: costDisplay.label })}</span>
-          {costDisplay.totals !== null && (
-            <>
-              <span className={css.costBuckets}>
-                {t('stats.costDetail', {
-                  input: formatCost(costDisplay.totals.input),
-                  cache: formatCost(costDisplay.totals.cache),
-                  output: formatCost(costDisplay.totals.output),
-                })}
-              </span>
-              {costDisplay.totals.models.length > 0 && (
-                <span className={css.costModels}>
-                  {t('stats.costModels', {
-                    models: costDisplay.totals.models
-                      .map(entry => `${entry.model} ${formatCost(entry.cost)}`)
-                      .join(' · '),
-                  })}
-                </span>
-              )}
-            </>
+      {!expanded && costDisplay === null && groups.length > 0 && (
+        <span className={css.costInline}>{groups[0]}</span>
+      )}
+      {expanded && (
+        <>
+          {groups.length > 0 && (
+            <div className={css.line}>
+              {groups.map((group, i) => (
+                <Fragment key={group}>
+                  {i > 0 && <><span className={css.sep} aria-hidden>|</span>{' '}</>}
+                  <span>{group}</span>
+                </Fragment>
+              ))}
+            </div>
           )}
-        </div>
+          {costDisplay !== null && (
+            <div className={css.cost}>
+              <span className={css.costTotal}>{t('stats.cost', { cost: costDisplay.label })}</span>
+              {costDisplay.totals !== null && (
+                <>
+                  <span className={css.costBuckets}>
+                    {t('stats.costDetail', {
+                      input: formatCost(costDisplay.totals.input),
+                      cache: formatCost(costDisplay.totals.cache),
+                      output: formatCost(costDisplay.totals.output),
+                    })}
+                  </span>
+                  {costDisplay.totals.models.length > 0 && (
+                    <span className={css.costModels}>
+                      {t('stats.costModels', {
+                        models: costDisplay.totals.models
+                          .map(entry => `${entry.model} ${formatCost(entry.cost)}`)
+                          .join(' · '),
+                      })}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   )
