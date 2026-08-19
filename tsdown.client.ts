@@ -82,6 +82,17 @@ export function clientBundle(id: string, libEntry: readonly string[]): UserConfi
     sourcemap: true,
     clean: false,
     external: [...CLIENT_EXTERNALS],
+    // Excalidraw's dependency tree pulls in nanoid (3.x CJS + 4.x node build),
+    // which references node:crypto (`randomFillSync`) and the global `Buffer`
+    // at module top level; browsers have neither. Alias to a Web Crypto shim
+    // instead of leaving the builtin external (the client module table has no
+    // `crypto` row, and a hidden builtin would fail the bundle at load).
+    // tsdown reads the top-level Record alias (resolve.alias would be replaced
+    // by its own `resolve: { alias }` construction).
+    alias: {
+      crypto: resolvePath(REPOSITORY_ROOT, 'src/client/crypto-shim.ts'),
+      'node:crypto': resolvePath(REPOSITORY_ROOT, 'src/client/crypto-shim.ts'),
+    },
     define: {
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
       'import.meta.env.MODE': JSON.stringify(process.env.NODE_ENV ?? 'production'),
