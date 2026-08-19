@@ -18,6 +18,40 @@ interface ScenePayload {
   appState: Record<string, unknown>
 }
 
+/**
+ * AppState fields that are live runtime objects (Map/Set/handles) and can
+ * never survive JSON persistence. The parent persists the scene with
+ * JSON.stringify, which turns a Map or Set into `{}` — reloading then feeds
+ * e.g. `collaborators: {}` into code that calls `.forEach`, crashing the
+ * canvas. Strip them on both directions: never send them up, and drop any
+ * that a legacy scene file may already contain.
+ */
+const NON_PERSISTED_APPSTATE_KEYS = new Set([
+  'collaborators',
+  'followedBy',
+  'pointers',
+  'imageCache',
+  'originalElements',
+  '_cache',
+  'fileHandle',
+  'selectedLinearElement',
+  'suggestedBindings',
+  'startBoundElement',
+  'cursorButton',
+  'editingElement',
+])
+
+/** Keep only the JSON-persistable subset of an AppState record. */
+function sanitizeAppState(appState: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(appState)) {
+    if (NON_PERSISTED_APPSTATE_KEYS.has(key)) continue
+    if (value instanceof Map || value instanceof Set) continue
+    clean[key] = value
+  }
+  return clean
+}
+
 /** Notify the parent of a scene change (debounced by the parent). */
 function post(message: Record<string, unknown>): void {
   window.parent.postMessage({ source: 'dsh-excalidraw', ...message }, '*')
@@ -37,7 +71,7 @@ function App(): React.ReactElement {
         if (scene !== undefined) {
           apiRef.current.updateScene({
             elements: scene.elements ?? [],
-            appState: scene.appState ?? {},
+            appState: sanitizeAppState(scene.appState ?? {}),
           })
         }
       }
@@ -56,7 +90,7 @@ function App(): React.ReactElement {
       <Excalidraw
         excalidrawAPI={(api) => { apiRef.current = api; setReady(true) }}
         onChange={(elements, appState) => {
-          post({ type: 'change', scene: { elements, appState } })
+          post({ type: 'change', scene: { elements, appState: sanitizeAppState(appState as Record<string, unknown>) } })
         }}
         theme="dark"
       />
