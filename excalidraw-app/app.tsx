@@ -10,6 +10,11 @@ import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Excalidraw } from '@excalidraw/excalidraw'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
+// Excalidraw ships no auto-injected stylesheet: its layout (canvas, toolbar,
+// shapes panel) is entirely CSS-driven. The tsdown plugin resolves this exact
+// specifier to a virtual id that inlines the prod stylesheet into a <style>
+// tag at app boot.
+import '@excalidraw/excalidraw/dist/prod/index.css'
 import './style.css'
 
 /** A scene payload: the serializable Excalidraw scene (elements + appState). */

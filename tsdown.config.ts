@@ -1,5 +1,6 @@
 import type { UserConfig } from 'tsdown'
 import { clientBundle } from './tsdown.client.ts'
+import * as nodePath from 'node:path'
 
 /**
  * Excalidraw app bundle: the standalone whiteboard application served at
@@ -92,11 +93,8 @@ const excalidrawApp: UserConfig = {
 
 /** Resolve the installed Excalidraw prod stylesheet path. */
 function resolveExcalidrawCss(): string {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { resolve } = require('node:path')
-  const { fileURLToPath } = require('node:url')
-  const root = resolve(fileURLToPath(new URL('.', import.meta.url)))
-  return resolve(root, 'node_modules/@excalidraw/excalidraw/dist/prod/index.css')
+  const { resolve } = nodePath
+  return resolve(process.cwd(), 'node_modules/@excalidraw/excalidraw/dist/prod/index.css')
 }
 
 /** Read the stylesheet, minified by tsdown/lightningcss automatically. */
