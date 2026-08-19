@@ -12,13 +12,16 @@ import {
 } from './background-settings.ts'
 import { BACKGROUND_IMAGE_FILE, handleBackgroundRequest } from './background-service.ts'
 import { installCompactionControl } from './compaction-control.ts'
-import { handleGitRequest, workspaceCwdResolver } from './git-service.ts'
+import { handleExcalidrawRequest } from './excalidraw-service.ts'
+import { installExcalidrawTools } from './excalidraw-tools.ts'
+import { handleGitRequest, type GitCwdResolver, workspaceCwdResolver } from './git-service.ts'
 
 export {
   BACKGROUND_IMAGE_FIELD, BACKGROUND_SETTINGS_NAMESPACE, MAX_BACKGROUND_IMAGE_BYTES,
   type PolishSettings,
 } from './background-settings.ts'
 export { handleBackgroundRequest, BACKGROUND_IMAGE_FILE } from './background-service.ts'
+export { handleExcalidrawRequest } from './excalidraw-service.ts'
 export { handleGitRequest, workspaceCwdResolver, type GitCwdResolver, type GitLogResult, type GitStatusEntry, type GitStatusResult } from './git-service.ts'
 
 const NAMESPACE = settingsNamespace(BACKGROUND_SETTINGS_NAMESPACE)
@@ -42,19 +45,21 @@ export function apply(ctx: Context): void {
     const scope = settingsCtx.settings.register(NAMESPACE, PolishSettingsSchema)
     installCompactionControl(settingsCtx, scope)
   })
+  installExcalidrawTools(ctx)
   ctx.inject(['webServer'], (serverCtx) => {
     const webServer = serverCtx.webServer
+    // Resolve per request so a workspace switch is followed without a restart.
+    const resolveWorkspaceCwd = (): GitCwdResolver => {
+      const workspaceRegistry = serverCtx.get('workspaceRegistry')
+      const known = workspaceRegistry === undefined
+        ? []
+        : workspaceRegistry.list().map(workspace => workspace.path)
+      return workspaceCwdResolver(known, FALLBACK_CWD)
+    }
     serverCtx.effect(() => webServer.register({
       kind: 'prefix',
       path: '/git',
-      handler: (req, res) => {
-        const workspaceRegistry = serverCtx.get('workspaceRegistry')
-        const known = workspaceRegistry === undefined
-          ? []
-          : workspaceRegistry.list().map(workspace => workspace.path)
-        const resolveCwd = workspaceCwdResolver(known, FALLBACK_CWD)
-        return handleGitRequest(resolveCwd, req, res)
-      },
+      handler: (req, res) => handleGitRequest(resolveWorkspaceCwd(), req, res),
     }), 'ui-polish: git panel route')
     // Background image: persisted as a file, served at /bg/current.
     serverCtx.effect(() => webServer.register({
@@ -62,5 +67,16 @@ export function apply(ctx: Context): void {
       path: '/bg',
       handler: (req, res) => handleBackgroundRequest(BACKGROUND_IMAGE_PATH, MAX_BACKGROUND_IMAGE_BYTES, req, res),
     }), 'ui-polish: background image route')
+    // Excalidraw: serve the standalone canvas app and its workspace scenes.
+    serverCtx.effect(() => webServer.register({
+      kind: 'prefix',
+      path: '/excalidraw',
+      handler: (req, res) => handleExcalidrawRequest(resolveWorkspaceCwd(), req, res),
+    }), 'ui-polish: excalidraw app route')
+    serverCtx.effect(() => webServer.register({
+      kind: 'prefix',
+      path: '/scene',
+      handler: (req, res) => handleExcalidrawRequest(resolveWorkspaceCwd(), req, res),
+    }), 'ui-polish: excalidraw scene route')
   })
 }

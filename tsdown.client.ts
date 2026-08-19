@@ -101,6 +101,37 @@ export function clientBundle(id: string, libEntry: readonly string[]): UserConfi
         )
       },
     }, {
+      // Inline third-party plain CSS (Excalidraw's stylesheet): resolve the
+      // package's dist CSS physically (its exports map exposes only index.css
+      // with dev/prod conditions, which rolldown cannot match), then inject it
+      // as a <style> tag like the CSS-modules loader does.
+      name: 'dsh-plain-css-inline',
+      resolveId(source: string) {
+        if (source === '@excalidraw/excalidraw/dist/prod/index.css') {
+          return '\0dsh-plain-css:excalidraw'
+        }
+        return null
+      },
+      async load(virtualId: string) {
+        if (virtualId !== '\0dsh-plain-css:excalidraw') return null
+        const pkgRoot = resolvePath(REPOSITORY_ROOT, 'node_modules/@excalidraw/excalidraw')
+        const fileId = resolvePath(pkgRoot, 'dist/prod/index.css')
+        this.addWatchFile(fileId)
+        const code = await readFile(fileId)
+        const tagId = `${id}/excalidraw.css`
+        return [
+          `const css = ${JSON.stringify(code.toString())};`,
+          `const tagId = ${JSON.stringify(tagId)};`,
+          'if (typeof document !== \'undefined\' && document.querySelector(\'style[data-plugin-css=\' + JSON.stringify(tagId) + \']\') === null) {',
+          '  const tag = document.createElement(\'style\');',
+          `  tag.dataset.plugin = ${JSON.stringify(id)};`,
+          '  tag.dataset.pluginCss = tagId;',
+          '  tag.textContent = css;',
+          '  document.head.appendChild(tag);',
+          '}',
+        ].join('\n')
+      },
+    }, {
       name: 'dsh-css-modules-inline',
       resolveId(source: string, importer: string | undefined) {
         if (!source.endsWith('.module.css')) return null
@@ -137,6 +168,7 @@ export function clientBundle(id: string, libEntry: readonly string[]): UserConfi
     }],
     outputOptions: {
       entryFileNames: 'client.js',
+      inlineDynamicImports: true,
       sourcemapPathTransform: browserSourcePath,
       banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(id)}, factory: (require) => {`,
       footer: 'return module.exports; } });',

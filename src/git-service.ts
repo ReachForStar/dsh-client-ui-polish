@@ -68,7 +68,7 @@ export function workspaceCwdResolver(known: readonly string[], fallback: string)
 }
 
 /** Normalize Windows separators so path matching is robust. */
-function normalizeSlashes(path: string): string {
+export function normalizeSlashes(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+$/, '')
 }
 

@@ -29,6 +29,7 @@ import { createBackgroundRowStore } from './settings-store.ts'
 import { createModelIndex, modelIndexDefinition, type ModelIndex } from './model-index.ts'
 import { StatsFloat } from './StatsFloat.tsx'
 import { GitPanel } from './GitPanel.tsx'
+import { ExcalidrawPanel } from './ExcalidrawPanel.tsx'
 import { MutationDiffPanel } from './MutationDiffPanel.tsx'
 import { en, zh, type PolishKey } from './locales.ts'
 
@@ -179,5 +180,14 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       label: () => t('git.tab'),
     }, GitPanel)
+    // Excalidraw canvas: a full whiteboard editor tab after Git, persisting
+    // scene files into the workspace directory.
+    yield ctx.slots.register({
+      name: 'conversation.view',
+      id: 'excalidraw',
+      order: 25,
+      locale: NS,
+      label: () => t('excalidraw.title'),
+    }, ExcalidrawPanel)
   })
 }

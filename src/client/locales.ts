@@ -13,6 +13,9 @@ export const zh = {
   'stats.cost': '费用 {cost}',
   'stats.costDetail': '输入 {input} · 缓存命中 {cache} · 输出 {output}',
   'stats.costModels': '模型 {models}',
+  // Excalidraw canvas tab.
+  'excalidraw.title': '画布',
+  'excalidraw.saving': '保存中…',
   // Git panel.
   'git.tab': 'Git',
   'git.title': 'Git 面板',
@@ -62,6 +65,8 @@ export const en = {
   'stats.cost': 'Cost {cost}',
   'stats.costDetail': 'Input {input} · Cache hit {cache} · Output {output}',
   'stats.costModels': 'Models {models}',
+  'excalidraw.title': 'Canvas',
+  'excalidraw.saving': 'Saving…',
   'git.tab': 'Git',
   'git.title': 'Git panel',
   'git.open': 'Git',
