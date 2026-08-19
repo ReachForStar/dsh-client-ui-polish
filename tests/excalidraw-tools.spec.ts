@@ -49,9 +49,9 @@ function execFor(cwd: string) {
 }
 
 describe('excalidraw model tools', () => {
-  it('registers both tools and unwinds on dispose', () => {
+  it('registers all three tools and unwinds on dispose', () => {
     const b = bench()
-    expect(b.registered.map(entry => entry.name).sort()).toEqual(['excalidraw_read', 'excalidraw_write'])
+    expect(b.registered.map(entry => entry.name).sort()).toEqual(['excalidraw_draw', 'excalidraw_read', 'excalidraw_write'])
     b.disposers.forEach(dispose => dispose())
     expect(b.registered).toHaveLength(0)
   })
@@ -130,6 +130,93 @@ describe('excalidraw model tools', () => {
       const value = await readTool.definition.execute({}, execFor(workspace))
       expect(value).toMatchObject({ exists: true })
       expect((value as { error?: string }).error).toContain('corrupted')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('draw appends shapes to a fresh scene and read reflects them', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-excalidraw-tool-'))
+    try {
+      const b = bench()
+      const drawTool = b.registered.find(entry => entry.name === 'excalidraw_draw')!
+      const drawn = await drawTool.definition.execute({
+        elements: [
+          { type: 'rectangle', x: 10, y: 20, width: 100, height: 50 },
+          { type: 'text', x: 10, y: 80, width: 200, height: 30, text: 'answer' },
+          { type: 'arrow', x: 0, y: 0, width: 50, height: 50, points: [[0, 0], [50, 50]] },
+        ],
+        action: 'append',
+      }, execFor(workspace))
+      expect(drawn).toMatchObject({ ok: true, added: 3, totalElements: 3, skipped: 0 })
+
+      const onDisk = JSON.parse(await readFile(join(workspace, SCENE_RELATIVE), 'utf8'))
+      expect(onDisk.elements).toHaveLength(3)
+      expect(onDisk.elements.map((e: { type: string }) => e.type)).toEqual(['rectangle', 'text', 'arrow'])
+      // Minimal elements: no seed/version/index leaked from the tool side.
+      expect(onDisk.elements[0]).not.toHaveProperty('seed')
+      expect(onDisk.elements[0]).not.toHaveProperty('version')
+
+      const readTool = b.registered.find(entry => entry.name === 'excalidraw_read')!
+      const value = await readTool.definition.execute({}, execFor(workspace))
+      expect((value as { elements: unknown[] }).elements).toHaveLength(3)
+      expect((value as { elements: { type: string }[] }).elements[1]).toMatchObject({ type: 'text', text: 'answer' })
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('draw replace clears the canvas before adding', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-excalidraw-tool-'))
+    try {
+      const b = bench()
+      const drawTool = b.registered.find(entry => entry.name === 'excalidraw_draw')!
+      await drawTool.definition.execute({ elements: [{ type: 'rectangle', x: 0, y: 0, width: 10, height: 10 }] }, execFor(workspace))
+      await drawTool.definition.execute({
+        elements: [{ type: 'ellipse', x: 5, y: 5, width: 20, height: 20 }],
+        action: 'replace',
+      }, execFor(workspace))
+      const onDisk = JSON.parse(await readFile(join(workspace, SCENE_RELATIVE), 'utf8'))
+      expect(onDisk.elements).toHaveLength(1)
+      expect(onDisk.elements[0].type).toBe('ellipse')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('draw skips unsupported types and rejects an all-invalid call', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-excalidraw-tool-'))
+    try {
+      const b = bench()
+      const drawTool = b.registered.find(entry => entry.name === 'excalidraw_draw')!
+      const drawn = await drawTool.definition.execute({
+        elements: [
+          { type: 'rectangle', x: 0, y: 0, width: 10, height: 10 },
+          { type: 'wiggly-widget', x: 0, y: 0, width: 10, height: 10 },
+        ],
+      }, execFor(workspace))
+      expect(drawn).toMatchObject({ added: 1, totalElements: 1, skipped: 1 })
+
+      await expect(drawTool.definition.execute({
+        elements: [{ type: 'nope', x: 0, y: 0, width: 1, height: 1 }],
+      }, execFor(workspace))).rejects.toThrow('no supported element types')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('draw rejects non-array elements and a bad action', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-excalidraw-tool-'))
+    try {
+      const b = bench()
+      const drawTool = b.registered.find(entry => entry.name === 'excalidraw_draw')!
+      // A non-array `elements` is rejected by the tool schema before execute.
+      await expect(drawTool.definition.execute({ elements: 'nope' }, execFor(workspace))).rejects.toThrow('must be an array')
+      await expect(drawTool.definition.execute({ elements: [] }, execFor(workspace))).rejects.toThrow('non-empty array')
+      await expect(drawTool.definition.execute({
+        elements: [{ type: 'rectangle', x: 0, y: 0, width: 1, height: 1 }],
+        action: 'clear',
+      }, execFor(workspace))).rejects.toThrow('append')
     } finally {
       await rm(workspace, { recursive: true, force: true })
     }
