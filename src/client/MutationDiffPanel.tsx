@@ -46,6 +46,25 @@ function formatModified(ms: number): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
+/**
+ * A compact type glyph for one file, based on its extension. SVG-free (no
+ * emoji-as-icon per ui-ux-pro-max): single-character typographic markers the
+ * monospace theme renders crisply.
+ */
+function fileGlyph(name: string): string {
+  const dot = name.lastIndexOf('.')
+  if (dot <= 0) return 'ƒ'
+  const ext = name.slice(dot + 1).toLowerCase()
+  if (ext === 'ts' || ext === 'tsx' || ext === 'js' || ext === 'jsx' || ext === 'mjs' || ext === 'cjs') return 'J'
+  if (ext === 'json' || ext === 'yaml' || ext === 'yml' || ext === 'toml' || ext === 'lock') return '{'
+  if (ext === 'md' || ext === 'txt' || ext === 'rst') return 'M'
+  if (ext === 'css' || ext === 'scss' || ext === 'less' || ext === 'html' || ext === 'vue' || ext === 'svelte') return '#'
+  if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'gif' || ext === 'webp' || ext === 'svg') return '▨'
+  if (ext === 'py' || ext === 'sh' || ext === 'bash' || ext === 'ps1') return '>'
+  if (ext === 'yml' || ext === 'yaml') return '≋'
+  return 'ƒ'
+}
+
 /** The workspace path owning the current session, if any. */
 function workspacePathOf(
   sessionId: string | undefined,
@@ -151,9 +170,11 @@ export function MutationDiffPanel({ useSession, useWorkspaces, t }: MutationDiff
         <li key={entry.path}>
           <button
             type="button" className={css.dir}
+            aria-expanded={open}
             onClick={() => { void toggleDir(entry.path) }}
           >
-            <span className={css.dirArrow}>{open ? '▾' : '▸'}</span>
+            <span className={css.dirArrow} aria-hidden>{open ? '▾' : '▸'}</span>
+            <span className={css.dirGlyph} aria-hidden>▤</span>
             <span className={css.filePath}>{entry.name}/</span>
           </button>
           {open && (
@@ -169,9 +190,11 @@ export function MutationDiffPanel({ useSession, useWorkspaces, t }: MutationDiff
     return (
       <li key={entry.path}>
         <button
-          type="button" className={css.file}
+          type="button"
+          className={selected === entry.path ? css.fileSelected : css.file}
           onClick={() => { void openFile(entry.path) }}
         >
+          <span className={css.fileGlyph} aria-hidden>{fileGlyph(entry.name)}</span>
           <span className={css.filePath}>{entry.name}</span>
           {entry.size !== null && (
             <span className={css.fileMeta}>

@@ -43,7 +43,9 @@ const DARK_ATTRIBUTE = 'data-ds-dark-theme'
  */
 const PERSISTED_APPSTATE_KEYS = new Set([
   'viewBackgroundColor',
-  'theme',
+  // 'theme' is deliberately NOT persisted: the canvas theme always follows the
+  // DSH theme (this component's `theme` prop is driven by body[data-ds-dark-theme]),
+  // so a saved scene must never override it on reload.
   'gridSize',
   'gridStep',
   'exportBackground',

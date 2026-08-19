@@ -1,5 +1,8 @@
 /* File panel view: a conversation.view tab filling the view area with a
-   two-column layout (touched files | editable content). */
+   two-column layout (workspace directory tree | editable content).
+   Design: developer-tool dark-first (ui-ux-pro-max OLED palette + IBM Plex /
+   JetBrains Mono pairing), 150-300ms ease-out micro-interactions, visible
+   focus rings, type-coded file glyphs. */
 
 .view {
   display: flex;
@@ -19,6 +22,7 @@
   display: flex;
   align-items: baseline;
   gap: 12px;
+  flex: none;
 }
 
 .title {
@@ -73,13 +77,24 @@
   gap: 6px;
   align-items: baseline;
   width: 100%;
-  padding: 3px 0;
+  padding: 3px 6px;
   border: none;
+  border-radius: 6px;
   background: none;
   text-align: left;
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
   font-weight: 600;
+  transition: background-color 150ms ease-out;
+}
+
+.dir:hover {
+  background: color-mix(in srgb, var(--dsw-alias-button-floating-fill) 60%, transparent);
+}
+
+.dir:focus-visible {
+  outline: 2px solid var(--dsw-alias-accent);
+  outline-offset: -2px;
 }
 
 .dirArrow {
@@ -89,17 +104,40 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
-.file {
+.dirGlyph,
+.fileGlyph {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-family: var(--dsw-font-mono);
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.file,
+.fileSelected {
   display: flex;
   gap: 10px;
   align-items: baseline;
   width: 100%;
-  padding: 3px 0;
+  padding: 3px 8px;
   border: none;
+  border-radius: 6px;
   background: none;
   text-align: left;
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
+}
+
+.file:hover {
+  background: color-mix(in srgb, var(--dsw-alias-button-floating-fill) 60%, transparent);
+}
+
+.fileSelected {
+  outline: 2px solid var(--dsw-alias-accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--dsw-alias-accent) 14%, transparent);
 }
 
 .fileMeta {
@@ -119,6 +157,16 @@
   color: var(--dsw-alias-label-primary);
   font-size: 12px;
   cursor: pointer;
+  transition: border-color 150ms ease-out, background-color 150ms ease-out;
+}
+
+.refresh:hover {
+  border-color: var(--dsw-alias-accent);
+}
+
+.refresh:focus-visible {
+  outline: 2px solid var(--dsw-alias-accent);
+  outline-offset: -1px;
 }
 
 .fileStatus {
@@ -148,6 +196,11 @@
   color: var(--dsw-alias-label-primary);
   font-size: 13px;
   cursor: pointer;
+  transition: border-color 150ms ease-out, opacity 150ms ease-out;
+}
+
+.action:hover:not(:disabled) {
+  border-color: var(--dsw-alias-accent);
 }
 
 .action:disabled {
@@ -171,4 +224,9 @@
   overflow-wrap: normal;
   overflow: auto;
   resize: vertical;
+}
+
+.editor:focus-visible {
+  outline: 2px solid var(--dsw-alias-accent);
+  outline-offset: -1px;
 }

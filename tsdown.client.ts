@@ -100,6 +100,108 @@ export function clientBundle(id: string, libEntry: readonly string[]): UserConfi
     },
     noExternal: (dependency: string) => (CLIENT_EXTERNALS.includes(dependency) ? undefined : true),
     plugins: [{
+      // Node built-ins (crypto/url/util/fs/path/…) reach the bundle through
+      // vendored libraries (cosmokit) and Excalidraw's node-conditional code.
+      // In the browser they are either dead requires (rolldown keeps the
+      // statement but removes every use) or guarded branches; the harness
+      // module loader executes ALL top-level requires at factory time, so an
+      // unresolvable `require("crypto")` fails plugin load. Stub them out.
+      name: 'dsh-node-builtin-stub',
+      resolveId(source: string) {
+        const bare = source.startsWith('node:') ? source.slice(5) : source
+        const NODE_BUILTINS = new Set([
+          'assert', 'buffer', 'child_process', 'crypto', 'events', 'fs', 'http',
+          'https', 'net', 'os', 'path', 'process', 'stream', 'string_decoder',
+          'timers', 'tty', 'url', 'util', 'worker_threads', 'zlib',
+        ])
+        if (!NODE_BUILTINS.has(bare)) return null
+        return '\0dsh-node-stub:' + bare
+      },
+      load(virtualId: string) {
+        if (!virtualId.startsWith('\0dsh-node-stub:')) return null
+        const name = virtualId.slice('\0dsh-node-stub:'.length)
+        // Browser-safe stand-ins for the small Node APIs bundled code actually
+        // touches at runtime (uuid's sha1/md5 via node:crypto, and the frozen
+        // `process` constant some libraries reference). Full Node built-ins are
+        // never available in the browser; everything else is dead require.
+        if (name === 'crypto') {
+          // Browser-safe stand-in for the small subset of node:crypto that
+          // bundled code actually touches at runtime (uuid's dist-node path:
+          // createHash sha1/sha256 + randomFillSync). Uses the platform's own
+          // crypto.getRandomValues for entropy and a compact SHA-1/SHA-256 for
+          // deterministic digests. Not for security — only stable ids.
+          return `
+            const gv = typeof crypto !== 'undefined' && crypto.getRandomValues
+              ? (n) => crypto.getRandomValues(n)
+              : null;
+            export function randomFillSync(buf) {
+              if (gv) { gv(buf); return buf; }
+              for (let i = 0; i < buf.length; i++) buf[i] = Math.floor(Math.random() * 256);
+              return buf;
+            }
+            export function randomUUID() {
+              const b = new Uint8Array(16); randomFillSync(b);
+              b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+              const h = Array.from(b, x => x.toString(16).padStart(2, '0'));
+              return h.slice(0,4).join('') + '-' + h.slice(4,6).join('') + '-' + h.slice(6,8).join('')
+                + '-' + h.slice(8,10).join('') + '-' + h.slice(10,16).join('');
+            }
+            const K32 = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+            function bytesToWords(b) { const w = new Uint32Array((b.length + 3) >> 2); for (let i = 0; i < b.length; i++) w[i >> 2] |= b[i] << (24 - (i & 3) * 8); return w; }
+            function sha256(data) {
+              const msg = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+              const ml = msg.length * 8;
+              const padded = new Uint8Array(((msg.length + 8) >> 6 << 6) + 64);
+              padded.set(msg); padded[msg.length] = 0x80;
+              const dv = new DataView(padded.buffer);
+              dv.setUint32(padded.length - 4, ml >>> 0, false); dv.setUint32(padded.length - 8, Math.floor(ml / 0x100000000), false);
+              let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;
+              const w = new Uint32Array(64);
+              for (let i = 0; i < padded.length; i += 64) {
+                const chunk = new Uint8Array(padded.buffer, i, 64);
+                const words = bytesToWords(chunk);
+                for (let j = 0; j < 16; j++) w[j] = words[j];
+                for (let j = 16; j < 64; j++) {
+                  const s0 = ((w[j-15]>>>7)|(w[j-15]<<25)) ^ ((w[j-15]>>>18)|(w[j-15]<<14)) ^ (w[j-15]>>>3);
+                  const s1 = ((w[j-2]>>>17)|(w[j-2]<<15)) ^ ((w[j-2]>>>19)|(w[j-2]<<13)) ^ (w[j-2]>>>10);
+                  w[j] = (w[j-16] + s0 + w[j-7] + s1) >>> 0;
+                }
+                let a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
+                for (let j = 0; j < 64; j++) {
+                  const S1 = ((e>>>6)|(e<<26)) ^ ((e>>>11)|(e<<21)) ^ ((e>>>25)|(e<<7));
+                  const ch = (e & f) ^ (~e & g);
+                  const t1 = (h + S1 + ch + K32[j] + w[j]) >>> 0;
+                  const S0 = ((a>>>2)|(a<<30)) ^ ((a>>>13)|(a<<19)) ^ ((a>>>22)|(a<<10));
+                  const maj = (a & b) ^ (a & c) ^ (b & c);
+                  const t2 = (S0 + maj) >>> 0;
+                  h=g; g=f; f=e; e=(d+t1)>>>0; d=c; c=b; b=a; a=(t1+t2)>>>0;
+                }
+                h0=(h0+a)>>>0; h1=(h1+b)>>>0; h2=(h2+c)>>>0; h3=(h3+d)>>>0; h4=(h4+e)>>>0; h5=(h5+f)>>>0; h6=(h6+g)>>>0; h7=(h7+h)>>>0;
+              }
+              const out = new Uint8Array(32); const w2 = [h0,h1,h2,h3,h4,h5,h6,h7];
+              for (let i = 0; i < 8; i++) { out[i*4] = w2[i]>>>24; out[i*4+1] = w2[i]>>>16; out[i*4+2] = w2[i]>>>8; out[i*4+3] = w2[i]; }
+              return out;
+            }
+            export function createHash(algorithm) {
+              let data = '';
+              return {
+                update(input) { data += typeof input === 'string' ? input : Array.from(input, x => String.fromCharCode(x)).join(''); return this; },
+                digest(encoding) {
+                  const bytes = sha256(data);
+                  const hex = Array.from(bytes, x => x.toString(16).padStart(2, '0')).join('');
+                  return encoding === 'hex' ? hex : bytes;
+                }
+              };
+            }
+            export default { randomFillSync, randomUUID, createHash };
+          `
+        }
+        if (name === 'process') {
+          return 'export const env = {}; export default { env: {}, browser: true };'
+        }
+        return 'export default {};'
+      },
+    }, {
       name: 'dsh-client-bundle-purity',
       resolveId(source: string) {
         if (!source.startsWith('@deepseek-ai/')) return null
@@ -183,7 +285,23 @@ export function clientBundle(id: string, libEntry: readonly string[]): UserConfi
       sourcemapPathTransform: browserSourcePath,
       banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(id)}, factory: (require) => {`,
       footer: 'return module.exports; } });',
-      intro: 'var module = { exports: {} }; var exports = module.exports;',
+      intro: `var module = { exports: {} }; var exports = module.exports;
+// Minimal Buffer polyfill: bundled libraries (nanoid's node dist) reference
+// the Node global Buffer.allocUnsafe. The browser has no Buffer; provide the
+// two allocators used, backed by Uint8Array + crypto.getRandomValues.
+if (typeof Buffer === 'undefined' && typeof globalThis !== 'undefined') {
+  var _gv = typeof crypto !== 'undefined' && crypto.getRandomValues ? function (n) { crypto.getRandomValues(n); return n; } : function (n) { for (var i = 0; i < n.length; i++) n[i] = Math.floor(Math.random() * 256); return n; };
+  globalThis.Buffer = {
+    allocUnsafe: function (size) { return new Uint8Array(size); },
+    alloc: function (size) { var b = new Uint8Array(size); return _gv(b); },
+    from: function (input) {
+      if (typeof input === 'string') return new TextEncoder().encode(input);
+      if (input instanceof Uint8Array) return input;
+      return new Uint8Array(input);
+    },
+    isBuffer: function () { return false; },
+  };
+}`,
     },
   }
   return [lib, client]
