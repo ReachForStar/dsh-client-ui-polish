@@ -5,13 +5,12 @@
 // fallback for assemblies without the sessionStats unit).
 
 import { Fragment, memo, useMemo } from 'react'
-import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ConversationSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: merges the sessionStats key into SessionProjectionMap for useProjection.
 import type {} from '@deepseek-ai/dsh-session-stats/client'
 import type { TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client'
-import { billedInputTokens, costBreakdown, estimateCost, formatCost } from './cost.ts'
+import { accumulateCost, billedInputTokens, estimateCost, formatCost } from './cost.ts'
 import css from './StatsFloat.module.css'
 
 /** Compact token count: 517 / 12.2K / 517K / 1.2M (one decimal under three digits). */
@@ -74,55 +73,39 @@ function modelOfNode(
   return modelOf(String(node.messageId))
 }
 
+/** One cost-attributable assistant message: usage, model, and settled time. */
+export interface MessageCostInput {
+  usage: TokenUsageProjection
+  model: string
+  /** Unix epoch ms when the message settled (drives time-tiered pricing). */
+  at: number
+}
+
 /**
- * Model-keyed usage totals over the settled assistant nodes in the window.
- * Each finalized message carries its own provider usage and model, so a
- * session that switched models bills each step at its own rate. Nodes without
- * a model or without usage are skipped; the caller falls back to the durable
- * projection when nothing is attributable.
+ * Cost-attributable messages over the settled assistant nodes in the window.
+ * Each finalized message carries its own provider usage, model, and settle
+ * time, so a session that switched models or crossed a peak/off-peak boundary
+ * bills each step at its own rate. Nodes without a model or without usage are
+ * skipped; the caller falls back to the durable projection when nothing is
+ * attributable.
  * @param nodes - the conversation snapshot's legacy nodes.
  * @param modelOf - the plugin's messageId → model index lookup.
- * @returns model → summed usage; empty when no node carries both.
+ * @returns per-message cost inputs; empty when no node carries both.
  */
-export function usageByModel(
+export function messageCosts(
   nodes: readonly ConversationSnapshot['chat']['legacy']['nodes'][number][],
   modelOf: (messageId: string) => string | undefined,
-): Map<string, TokenUsageProjection> {
-  const totals = new Map<string, TokenUsageProjection>()
+): MessageCostInput[] {
+  const messages: MessageCostInput[] = []
   for (const node of nodes) {
     if (node.kind !== 'assistant') continue
     const model = modelOfNode(node, modelOf)
     if (model === undefined) continue
     const usage = projectionFromNodeUsage(node.usage)
     if (usage === null) continue
-    const prior = totals.get(model)
-    if (prior === undefined) {
-      totals.set(model, usage)
-    } else {
-      totals.set(model, {
-        uncachedInputTokens: prior.uncachedInputTokens + usage.uncachedInputTokens,
-        outputTokens: prior.outputTokens + usage.outputTokens,
-        cacheReadTokens: prior.cacheReadTokens + usage.cacheReadTokens,
-        cacheWriteTokens: prior.cacheWriteTokens + usage.cacheWriteTokens,
-      })
-    }
+    messages.push({ usage, model, at: node.time })
   }
-  return totals
-}
-
-/** Sum one model-keyed usage map into a single projection (for the tooltip). */
-function sumUsageByModel(byModel: ReadonlyMap<string, TokenUsageProjection>): TokenUsageProjection {
-  let uncachedInputTokens = 0
-  let outputTokens = 0
-  let cacheReadTokens = 0
-  let cacheWriteTokens = 0
-  for (const usage of byModel.values()) {
-    uncachedInputTokens += usage.uncachedInputTokens
-    outputTokens += usage.outputTokens
-    cacheReadTokens += usage.cacheReadTokens
-    cacheWriteTokens += usage.cacheWriteTokens
-  }
-  return { uncachedInputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }
+  return messages
 }
 
 /** Window-scoped fallback totals (only when the sessionStats projection is absent). */
@@ -197,45 +180,27 @@ export const StatsFloat = memo(function StatsFloat({ useSession, useProjection, 
     }))
   }
   // Cost rides the same billed-activity gate; a sub-cent bill reads as ¥0.00
-  // and the row hides, so a fresh or failed session gains no noise. Model-keyed
-  // node usage bills each step at its own model's rate; when no settled node
+  // and the row hides, so a fresh or failed session gains no noise. Each
+  // settled assistant message is priced at its own model's rate and its own
+  // settle time (time-tiered models switch price at peak/off-peak boundaries),
+  // accumulated into total + input/output/cache buckets; when no settled node
   // carries attributable usage, fall back to the durable projection at the
   // default card so an estimate still shows.
-  const byModel = useMemo(() => usageByModel(settledNodes, modelOf), [settledNodes, modelOf])
+  const messages = useMemo(() => messageCosts(settledNodes, modelOf), [settledNodes, modelOf])
   const bill = usage !== undefined && (billedInputTokens(usage) > 0 || usage.outputTokens > 0)
     ? usage
     : undefined
-  const nodeBill = byModel.size > 0 ? sumUsageByModel(byModel) : null
+  const totals = messages.length > 0 ? accumulateCost(messages) : null
   let costDisplay: {
+    totals: ReturnType<typeof accumulateCost> | null
     label: string
-    detail: ReturnType<typeof costBreakdown>
-    models: { model: string; cost: string }[]
   } | null = null
-  if (nodeBill !== null || bill !== undefined) {
-    const label = nodeBill !== null
-      ? formatCost([...byModel].reduce(
-        (sum, [model, usage]) => sum + estimateCost(usage, model),
-        0,
-      ))
-      : formatCost(estimateCost(bill!))
+  if (totals !== null || bill !== undefined) {
+    const label = totals !== null
+      ? formatCost(totals.total)
+      : formatCost(estimateCost(bill!, 'default', Date.now()))
     if (label !== '¥0.00') {
-      const detail = nodeBill !== null
-        ? [...byModel].reduce(
-          (acc, [model, usage]) => {
-            const parts = costBreakdown(usage, model)
-            return {
-              input: acc.input + parts.input,
-              cache: acc.cache + parts.cache,
-              output: acc.output + parts.output,
-            }
-          },
-          { input: 0, cache: 0, output: 0 },
-        )
-        : costBreakdown(bill!)
-      const models = nodeBill !== null
-        ? [...byModel].map(([model, usage]) => ({ model, cost: formatCost(estimateCost(usage, model)) }))
-        : []
-      costDisplay = { label, detail, models }
+      costDisplay = { totals, label }
     }
   }
   if (groups.length === 0 && costDisplay === null) return null
@@ -252,27 +217,29 @@ export const StatsFloat = memo(function StatsFloat({ useSession, useProjection, 
         </div>
       )}
       {costDisplay !== null && (
-        <Tooltip
-          label={t('stats.costDetail', {
-            input: formatCost(costDisplay.detail.input),
-            cache: formatCost(costDisplay.detail.cache),
-            output: formatCost(costDisplay.detail.output),
-          })}
-          side="top"
-        >
-          <span className={css.cost}>
-            {t('stats.cost', { cost: costDisplay.label })}
-            {costDisplay.models.length > 0 && (
-              <span className={css.costModels}>
-                {t('stats.costModels', {
-                  models: costDisplay.models
-                    .map(entry => `${entry.model} ${entry.cost}`)
-                    .join(' · '),
+        <div className={css.cost}>
+          <span className={css.costTotal}>{t('stats.cost', { cost: costDisplay.label })}</span>
+          {costDisplay.totals !== null && (
+            <>
+              <span className={css.costBuckets}>
+                {t('stats.costDetail', {
+                  input: formatCost(costDisplay.totals.input),
+                  cache: formatCost(costDisplay.totals.cache),
+                  output: formatCost(costDisplay.totals.output),
                 })}
               </span>
-            )}
-          </span>
-        </Tooltip>
+              {costDisplay.totals.models.length > 0 && (
+                <span className={css.costModels}>
+                  {t('stats.costModels', {
+                    models: costDisplay.totals.models
+                      .map(entry => `${entry.model} ${formatCost(entry.cost)}`)
+                      .join(' · '),
+                  })}
+                </span>
+              )}
+            </>
+          )}
+        </div>
       )}
     </div>
   )

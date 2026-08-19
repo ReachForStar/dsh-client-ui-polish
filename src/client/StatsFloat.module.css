@@ -44,6 +44,20 @@
   cursor: default;
 }
 
+.costTotal {
+  color: var(--dsw-alias-label-primary);
+}
+
+.costBuckets {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 400;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
 .costModels {
   display: block;
   margin-top: 2px;

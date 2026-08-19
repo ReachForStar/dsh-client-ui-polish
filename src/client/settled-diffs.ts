@@ -1,7 +1,7 @@
-// Settled file-mutation (diff-card) detection for the floating diff panel: a
-// root Tool lifecycle whose settled result carries the `card: 'diff'` render
-// intent (the write/edit family) has an applied diff worth showing. Reads only
-// the runtime block's own view fields.
+// Settled file-mutation (diff-card) detection for the file panel: a root Tool
+// lifecycle whose settled result carries the `card: 'diff'` render intent (the
+// write/edit family) or the `card: 'read'` intent (the read tool) names files
+// worth opening. Reads only the runtime block's own view fields.
 
 import type { ConversationSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
 import type { DiffHunk } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -14,6 +14,14 @@ export interface SettledDiffCall {
   name: string
   /** Validated applied hunks. */
   diffs: DiffHunk[]
+}
+
+/** One tool-operated file path with the tool that touched it. */
+export interface TouchedFile {
+  /** Tool display name (read/edit/write/…). */
+  tool: string
+  /** Repository/workspace-relative file path. */
+  path: string
 }
 
 /**
@@ -54,6 +62,44 @@ export function settledDiffCalls(snapshot: ConversationSnapshot): SettledDiffCal
     const diffs = narrowDiffs(root.resultView.diffs)
     if (diffs === null) continue
     out.push({ callId: root.callId, name: root.call?.name ?? root.callId, diffs })
+  }
+  return out
+}
+
+/**
+ * Collect every file path a settled tool call operated on (read/edit/write),
+ * deduplicated in store order. Read cards carry the file path in `resultView.path`;
+ * diff cards carry it per hunk.
+ * @param snapshot - the session's conversation snapshot.
+ * @returns touched file paths with the tool that touched them.
+ */
+export function touchedFiles(snapshot: ConversationSnapshot): TouchedFile[] {
+  const seen = new Set<string>()
+  const out: TouchedFile[] = []
+  for (const node of snapshot.chat.nodes.values()) {
+    if (node.kind !== 'tool-call') continue
+    const root = (node as ChatNode<'tool-call'>).data.root
+    if (!('kind' in root)) continue
+    const view = root.resultView
+    if (view === null || view === undefined) continue
+    const tool = root.call?.name ?? root.callId
+    if (view.card === 'read' && typeof view.path === 'string') {
+      const path = view.path
+      if (!seen.has(path)) {
+        seen.add(path)
+        out.push({ tool, path })
+      }
+      continue
+    }
+    if (view.card === 'diff') {
+      const diffs = narrowDiffs(view.diffs)
+      if (diffs === null) continue
+      for (const hunk of diffs) {
+        if (seen.has(hunk.path)) continue
+        seen.add(hunk.path)
+        out.push({ tool, path: hunk.path })
+      }
+    }
   }
   return out
 }

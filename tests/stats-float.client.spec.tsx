@@ -130,7 +130,8 @@ describe('StatsFloat', () => {
       sessionStats: sessionStats({ turns: 2, steps: 2 }),
     }, modelOf)} />)
     expect(view.container.textContent).toContain('费用 ¥6.00')
-    // The cost row breaks the total down per model.
+    // The cost block shows input/cache/output buckets and per-model subtotals.
+    expect(view.container.textContent).toContain('输入 ¥6.00 · 缓存命中 ¥0.00 · 输出 ¥0.00')
     expect(view.container.textContent).toContain('模型 deepseek-v4-flash ¥1.50 · deepseek-v4-pro ¥4.50')
   })
 

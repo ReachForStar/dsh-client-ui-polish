@@ -1,65 +1,100 @@
-/** Cost estimate and formatter helpers. */
+/** Cost estimate and formatter helpers: flat, time-tiered, and len-tiered billing. */
 import { describe, expect, it } from 'vitest'
 import {
-  billedInputTokens, costBreakdown, estimateCost, formatCost, rateCardFor,
+  accumulateCost, billingFor, billedInputTokens, costBreakdown, estimateCost, formatCost,
+  tierFor,
 } from '../src/client/cost.ts'
 
-describe('cost', () => {
-  it('estimates spend at the pinned rate card, billing cache writes at the input rate', () => {
-    const usage = {
-      uncachedInputTokens: 1_000_000,
-      cacheWriteTokens: 1_000_000,
-      cacheReadTokens: 1_000_000,
-      outputTokens: 1_000_000,
-    }
-    expect(billedInputTokens(usage)).toBe(3_000_000)
-    expect(estimateCost(usage)).toBeCloseTo(7.55, 10)
-    const parts = costBreakdown(usage)
-    expect(parts.input).toBeCloseTo(3, 10)
+/** Peak instant: 2026-08-19 01:00 UTC = 09:00 Asia/Shanghai (first peak window start, 540). */
+const PEAK_AT = Date.UTC(2026, 7, 19, 1, 0, 0)
+/** Off-peak instant: 2026-08-19 20:00 UTC = 04:00 Asia/Shanghai. */
+const OFF_PEAK_AT = Date.UTC(2026, 7, 19, 20, 0, 0)
+
+const USAGE = { uncachedInputTokens: 1_000_000, outputTokens: 500_000, cacheReadTokens: 1_000_000, cacheWriteTokens: 0 }
+
+describe('billingFor', () => {
+  it('resolves time-tiered, len-tiered, flat, and unknown models', () => {
+    expect(billingFor('deepseek-v4-flash').mode).toBe('time')
+    expect(billingFor('qwen3.5-flash').mode).toBe('len')
+    expect(billingFor('claude-sonnet-4-6').mode).toBe('flat')
+    expect(billingFor('future-model').mode).toBe('flat')
+  })
+})
+
+describe('tierFor', () => {
+  it('selects peak vs off-peak for deepseek by Asia/Shanghai minute', () => {
+    const billing = billingFor('deepseek-v4-flash')
+    const peak = tierFor(billing, USAGE, PEAK_AT)
+    expect(peak.inputPerMillion).toBe(3)
+    expect(peak.outputPerMillion).toBe(9)
+    expect(peak.cacheReadPerMillion).toBe(0.1)
+    const off = tierFor(billing, USAGE, OFF_PEAK_AT)
+    expect(off.inputPerMillion).toBe(1.5)
+    expect(off.outputPerMillion).toBe(4.5)
+    expect(off.cacheReadPerMillion).toBe(0.05)
+  })
+
+  it('selects the len tier covering the billed input length', () => {
+    const billing = billingFor('qwen3.5-flash')
+    const noCache = { ...USAGE, cacheReadTokens: 0, cacheWriteTokens: 0 }
+    const small = tierFor(billing, { ...noCache, uncachedInputTokens: 100_000 }, 0)
+    expect(small.inputPerMillion).toBe(0.2)
+    const mid = tierFor(billing, { ...noCache, uncachedInputTokens: 200_000 }, 0)
+    expect(mid.inputPerMillion).toBe(0.8)
+    const big = tierFor(billing, { ...noCache, uncachedInputTokens: 1_000_000 }, 0)
+    expect(big.inputPerMillion).toBe(1.2)
+  })
+})
+
+describe('estimateCost and costBreakdown', () => {
+  it('bills deepseek at off-peak rates outside peak windows', () => {
+    // input 1M×1.5 + cache 1M×0.05 + output 0.5M×4.5 = 1.5+0.05+2.25 = 3.80
+    const cost = estimateCost(USAGE, 'deepseek-v4-flash', OFF_PEAK_AT)
+    expect(cost).toBeCloseTo(3.80, 10)
+    const parts = costBreakdown(USAGE, 'deepseek-v4-flash', OFF_PEAK_AT)
+    expect(parts.input).toBeCloseTo(1.5, 10)
     expect(parts.cache).toBeCloseTo(0.05, 10)
-    expect(parts.output).toBeCloseTo(4.5, 10)
+    expect(parts.output).toBeCloseTo(2.25, 10)
   })
 
-  it('splits the bill into input, cache-read, and output buckets', () => {
-    const parts = costBreakdown({
-      uncachedInputTokens: 200_000,
-      cacheWriteTokens: 100_000,
-      cacheReadTokens: 10_000_000,
-      outputTokens: 50_000,
-    })
-    expect(parts.input).toBeCloseTo(0.45, 10)
-    expect(parts.cache).toBeCloseTo(0.5, 10)
-    expect(parts.output).toBeCloseTo(0.225, 10)
+  it('bills deepseek at 2x peak rates inside peak windows', () => {
+    // input 1M×3 + cache 1M×0.1 + output 0.5M×9 = 3+0.1+4.5 = 7.60
+    const cost = estimateCost(USAGE, 'deepseek-v4-flash', PEAK_AT)
+    expect(cost).toBeCloseTo(7.60, 10)
   })
 
-  it('prices known models at their own rate card, falling back to the default for unknown ones', () => {
-    // deepseek-v4-flash: input 1.5, output 4.5, cache read 0.05 (the default card).
-    expect(rateCardFor('deepseek-v4-flash')).toMatchObject({
-      inputPerMillion: 1.5, outputPerMillion: 4.5, cacheReadPerMillion: 0.05,
-    })
-    // deepseek-v4-pro: input 4.5, output 13.5, cache read 0.15.
-    expect(rateCardFor('deepseek-v4-pro')).toMatchObject({
-      inputPerMillion: 4.5, outputPerMillion: 13.5, cacheReadPerMillion: 0.15,
-    })
-    // A model missing from the JSON falls back to the default card.
-    expect(rateCardFor('totally-new-model')).toEqual(rateCardFor('deepseek-v4-flash'))
+  it('bills a len-tiered model at the tier covering the input length', () => {
+    const cost = estimateCost(
+      { uncachedInputTokens: 200_000, outputTokens: 500_000, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      'qwen3.5-flash',
+      0,
+    )
+    // input 200K×0.8 + output 0.5M×8 = 0.16 + 4 = 4.16
+    expect(cost).toBeCloseTo(4.16, 10)
   })
+})
 
-  it('estimates the same usage at different model rates', () => {
-    const usage = {
-      uncachedInputTokens: 1_000_000,
-      cacheWriteTokens: 0,
-      cacheReadTokens: 0,
-      outputTokens: 1_000_000,
-    }
-    // deepseek-v4-flash: 1.5 + 4.5 = 6.0.
-    expect(estimateCost(usage, 'deepseek-v4-flash')).toBeCloseTo(6.0, 10)
-    // deepseek-v4-pro: 4.5 + 13.5 = 18.0.
-    expect(estimateCost(usage, 'deepseek-v4-pro')).toBeCloseTo(18.0, 10)
-    // Unknown model bills at the default (flash) card.
-    expect(estimateCost(usage, 'unlisted-model')).toBeCloseTo(6.0, 10)
-    // Omitted model keeps the historical default-card behavior.
-    expect(estimateCost(usage)).toBeCloseTo(6.0, 10)
+describe('accumulateCost', () => {
+  it('sums buckets and per-model subtotals over messages at their own times', () => {
+    const totals = accumulateCost([
+      { usage: USAGE, model: 'deepseek-v4-flash', at: OFF_PEAK_AT }, // 3.80
+      { usage: USAGE, model: 'deepseek-v4-flash', at: PEAK_AT }, // 7.60
+      // deepseek-v4-pro off-peak: input 1M×4.5 + cache 1M×0.15 + output 0.5M×13.5 = 4.5+0.15+6.75 = 11.40
+      { usage: USAGE, model: 'deepseek-v4-pro', at: OFF_PEAK_AT },
+    ])
+    expect(totals.input).toBeCloseTo(1.5 + 3 + 4.5, 10)
+    expect(totals.cache).toBeCloseTo(0.05 + 0.1 + 0.15, 10)
+    expect(totals.output).toBeCloseTo(2.25 + 4.5 + 6.75, 10)
+    expect(totals.total).toBeCloseTo(3.80 + 7.60 + 11.40, 10)
+    expect(totals.models).toHaveLength(2)
+    const flash = totals.models.find(m => m.model === 'deepseek-v4-flash')
+    expect(flash?.cost).toBeCloseTo(3.80 + 7.60, 10)
+  })
+})
+
+describe('billedInputTokens and formatCost', () => {
+  it('sums the three prompt-side buckets', () => {
+    expect(billedInputTokens({ uncachedInputTokens: 10, cacheReadTokens: 90, cacheWriteTokens: 0, outputTokens: 5 })).toBe(100)
   })
 
   it('formats yuan with two decimals and thousands grouping, hiding sub-cent amounts', () => {

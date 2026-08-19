@@ -1,72 +1,151 @@
-// Floating file-mutation diff panel: a composer.dock contribution pinned to the
-// right edge (position:fixed) that shows the latest file modification which
-// settles while the session is being viewed. History is absorbed on load so a
-// reopened session stays quiet; each new write/edit that lands an applied diff
-// replaces the panel's content. This is the plugin-owned stand-in for the core
-// details panel, which a standalone plugin cannot drive.
+// File panel: a `conversation.view` tab (between the trajectory and Git tabs)
+// listing every file a settled tool call operated on in the session (read /
+// edit / write). Selecting a file reads its current content through the host's
+// /git/read route into an editable textarea; saving writes it back via
+// /git/write — the file is edited in place, never handed to a third-party app.
 
-import { useEffect, useRef, useState } from 'react'
-import { DiffBlock, IconCloseOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
-import { settledDiffCalls } from './settled-diffs.ts'
+import type { WorkspaceListState } from '@deepseek-ai/dsh-client-runtime/client'
+import { gitFetch } from './git-client.ts'
+import { touchedFiles } from './settled-diffs.ts'
 import css from './MutationDiffPanel.module.css'
 
-/** Full component props: session runtime share + the ui-polish locale seat. */
-export type MutationDiffPanelProps = PropsRuntime<'conversation.composer.dock'> & PropsLocale<'ui-polish'>
+/** Full component props: conversation view share + the ui-polish locale seat. */
+export type MutationDiffPanelProps = PropsRuntime<'conversation.view'> & PropsLocale<'ui-polish'>
 
-/** One shown mutation: the applied hunks plus the tool name for the header. */
-interface ShownMutation {
-  callId: string
-  name: string
-  diffs: import('@deepseek-ai/dsh-client-ui-primitives').DiffHunk[]
-}
-
-/** Equality over the settled-call identity list: re-render only on set changes. */
-function sameCalls(
-  a: ReturnType<typeof settledDiffCalls>,
-  b: ReturnType<typeof settledDiffCalls>,
-): boolean {
-  return a.length === b.length
-    && a.every((call, i) => call.callId === b[i]!.callId && call.name === b[i]!.name)
+/** The workspace path owning the current session, if any. */
+function workspacePathOf(
+  sessionId: string | undefined,
+  items: readonly WorkspaceListState['items'][number][],
+): string | undefined {
+  if (sessionId === undefined) return undefined
+  return items.find(item => item.sessionIds.includes(sessionId as never))?.path
 }
 
 /**
- * Render the floating mutation-diff panel.
+ * Render the file panel as a conversation view tab.
  * @param props - composed slot props.
- * @returns the panel element tree, or nothing until a mutation settles in-view.
+ * @returns the panel element tree.
  */
-export function MutationDiffPanel({ useSession, sessionId, t }: MutationDiffPanelProps) {
-  const calls = useSession(s => settledDiffCalls(s), sameCalls)
-  const [shown, setShown] = useState<ShownMutation | null>(null)
-  const seenRef = useRef<{ session: SessionId; seen: Set<string> } | null>(null)
-  useEffect(() => {
-    const current = seenRef.current
-    if (current === null || current.session !== sessionId) {
-      // Fresh session (or history still landing): absorb existing mutations.
-      seenRef.current = { session: sessionId, seen: new Set(calls.map(call => call.callId)) }
+export function MutationDiffPanel({ useSession, useWorkspaces, t }: MutationDiffPanelProps) {
+  const sessionId = useSession(s => s.sessionId)
+  const workspaceItems = useWorkspaces(s => s.items)
+  const cwd = workspacePathOf(sessionId, workspaceItems)
+  const files = useSession(s => touchedFiles(s))
+  const [selected, setSelected] = useState<string | null>(null)
+  const [content, setContent] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const cacheRef = useRef<{ path: string; content: string } | null>(null)
+
+  const openFile = useCallback(async (path: string): Promise<void> => {
+    if (cwd === undefined) return
+    setSelected(path)
+    const cached = cacheRef.current
+    if (cached !== null && cached.path === path) {
+      setContent(cached.content)
+      setError(null)
       return
     }
-    const fresh = calls.filter(call => !current.seen.has(call.callId))
-    if (fresh.length === 0) return
-    for (const call of fresh) current.seen.add(call.callId)
-    const latest = fresh[fresh.length - 1]!
-    setShown({ callId: latest.callId, name: latest.name, diffs: latest.diffs })
-  }, [calls, sessionId])
+    setContent(null)
+    setError(null)
+    try {
+      const result = await gitFetch<{ content: string }>('/git/read', cwd, {
+        method: 'POST',
+        body: JSON.stringify({ path }),
+      })
+      cacheRef.current = { path, content: result.content }
+      setContent(result.content)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [cwd])
 
-  if (shown === null) return null
+  // When a workspace switch changes cwd, the cached content belongs to the old
+  // workspace; drop it and re-read the selected file if any.
+  useEffect(() => {
+    cacheRef.current = null
+    if (selected !== null) void openFile(selected)
+  }, [cwd, openFile, selected])
+
+  const saveFile = async (): Promise<void> => {
+    if (cwd === undefined || selected === null || content === null) return
+    setBusy(true)
+    setError(null)
+    try {
+      await gitFetch('/git/write', cwd, {
+        method: 'POST',
+        body: JSON.stringify({ path: selected, content }),
+      })
+      cacheRef.current = { path: selected, content }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <div className={css.root} role="region" aria-label={t('diff.title')} data-ui-polish-diff="">
-      <div className={css.header}>
-        <span className={css.title}>{t('diff.title')} · {shown.name}</span>
-        <button
-          type="button" className={css.close} aria-label={t('diff.close')}
-          onClick={() => { setShown(null) }}
-        >
-          <IconCloseOutline16 size={12} />
-        </button>
+    <div className={css.view} data-ui-polish-diff="">
+      <div className={css.viewHeader}>
+        <span className={css.title}>{t('diff.title')}</span>
+        {cwd !== undefined && <span className={css.cwd}>{cwd}</span>}
       </div>
-      <DiffBlock diffs={shown.diffs} className={css.body} />
+      {cwd === undefined
+        ? <div className={css.notice}>{t('git.noWorkspace')}</div>
+        : (
+          <div className={css.columns}>
+            <div className={css.column}>
+              {files.length === 0
+                ? <div className={css.notice}>{t('diff.empty')}</div>
+                : (
+                  <ul className={css.files}>
+                    {files.map(file => (
+                      <li key={file.path}>
+                        <button
+                          type="button" className={css.file}
+                          onClick={() => { void openFile(file.path) }}
+                        >
+                          <span className={css.fileStatus}>{file.tool}</span>
+                          <span className={css.filePath}>{file.path}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+            </div>
+            <div className={css.column}>
+              {selected === null
+                ? <div className={css.notice}>{t('diff.select')}</div>
+                : (
+                  <>
+                    <div className={css.fileHeader}>
+                      <span className={css.filePath}>{selected}</span>
+                      <button
+                        type="button" className={css.action}
+                        disabled={busy || content === null}
+                        onClick={() => { void saveFile() }}
+                      >
+                        {t('diff.save')}
+                      </button>
+                    </div>
+                    {error !== null && <div className={css.error}>{error}</div>}
+                    {content === null
+                      ? <div className={css.notice}>…</div>
+                      : (
+                        <textarea
+                          className={css.editor}
+                          value={content}
+                          spellCheck={false}
+                          onChange={event => { setContent(event.target.value) }}
+                        />
+                      )}
+                  </>
+                )}
+            </div>
+          </div>
+        )}
     </div>
   )
 }

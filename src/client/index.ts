@@ -5,8 +5,8 @@
  *    token-override transparency for the structural surfaces),
  *  - a session stats float with an estimated cost (a composer.dock entry that
  *    pins itself to the viewport's top-right via position:fixed),
- *  - a floating git panel over the host repository (a composer.dock entry that
- *    talks to /git/* routes registered by the node half),
+ *  - a git panel as a conversation.view tab (right after the trajectory tab,
+ *    talking to /git/* routes registered by the node half),
  *  - a floating file-mutation diff panel (a composer.dock entry that watches
  *    the session for newly settled write/edit calls and draws the applied
  *    change at the right edge).
@@ -59,11 +59,11 @@ body[data-ds-bg-image] {
   --dsw-alias-bg-base: transparent;
   --dsw-specific-sidebar-fill: transparent;
 }
-/* This plugin owns the composer.dock readout: its floating stats, git panel,
-   and diff panels carry data-ui-polish-* markers, so every other dock entry
-   (the core's under-composer stats band) is hidden to avoid duplicating the
-   session readout. */
-[data-slot="conversation.composer.dock"] > *:not([data-ui-polish-stats]):not([data-ui-polish-diff]):not([data-ui-polish-git]) {
+/* This plugin owns the composer.dock readout: its floating stats panel carries
+   a data-ui-polish-stats marker, so every other dock entry (the core's
+   under-composer stats band) is hidden to avoid duplicating the session
+   readout. */
+[data-slot="conversation.composer.dock"] > *:not([data-ui-polish-stats]) {
   display: none;
 }
 `
@@ -91,6 +91,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => () => { background.dispose() }, 'ui-polish: background dispose')
 
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-polish: dictionaries')
+  const t = ctx.locale.bind(NS)
 
   // Per-model billing index: this plugin's own messageId → model record, fed
   // by a state-only Conversation Definition over the same assistant/message
@@ -139,7 +140,27 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: (): { modelOf: ModelIndex['modelOf'] } => ({ modelOf: modelIndex.modelOf }),
     }, StatsFloat)
-    yield ctx.slots.register({ name: 'conversation.composer.dock', id: 'polish-git', order: 5, locale: NS }, GitPanel)
-    yield ctx.slots.register({ name: 'conversation.composer.dock', id: 'polish-diff', order: 10, locale: NS }, MutationDiffPanel)
+  })
+
+  // File panel: a conversation.view tab (between the trajectory and Git tabs)
+  // listing every file a settled tool call operated on, with in-place editing.
+  ctx.slots.inject('conversation.view', function* () {
+    yield ctx.slots.register({
+      name: 'conversation.view',
+      id: 'files',
+      order: 15,
+      locale: NS,
+      label: () => t('diff.tab'),
+    }, MutationDiffPanel)
+    // Git panel as a conversation view tab: appears in the top tab ring right
+    // after the file tab, rendered only when selected. Collapsed state and
+    // fetch caching live in the component.
+    yield ctx.slots.register({
+      name: 'conversation.view',
+      id: 'git',
+      order: 20,
+      locale: NS,
+      label: () => t('git.tab'),
+    }, GitPanel)
   })
 }

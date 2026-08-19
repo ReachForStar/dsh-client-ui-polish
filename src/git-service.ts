@@ -9,6 +9,8 @@
  *  - `POST /git/commit` {cwd, message}  → `git add -A` + `git commit -m`.
  *  - `POST /git/push` {cwd}             → `git push`.
  *  - `POST /git/diff` {cwd, path}       → `git diff -- <path>`.
+ *  - `POST /git/read` {cwd, path}       → UTF-8 file content (view/edit).
+ *  - `POST /git/write` {cwd, path, content} → overwrite the file in place.
  *
  * The target directory is chosen per request from `cwd`, which the host
  * resolves against its known workspace paths — an unknown directory is
@@ -18,6 +20,8 @@
 
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { readFile, writeFile } from 'node:fs/promises'
+import { join, resolve, sep } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 const run = promisify(execFile)
@@ -106,6 +110,21 @@ function bodyPath(body: Record<string, unknown>, field: string): string {
   return value
 }
 
+/** Validate a repository-relative file path and resolve it against the cwd. */
+function resolveRepoPath(cwd: string, filePath: string): string {
+  // A repository-relative path must not escape the repo.
+  if (filePath.includes('..') || filePath.startsWith('/') || filePath.includes('\\')) {
+    throw new Error('git panel: invalid path')
+  }
+  const abs = resolve(join(cwd, filePath))
+  // Belt and braces: the resolved path must stay under the workspace root.
+  const root = resolve(cwd)
+  if (abs !== root && !abs.startsWith(root + sep)) {
+    throw new Error('git panel: path escapes the workspace')
+  }
+  return abs
+}
+
 /**
  * The git panel route handler: one prefix route owning every `/git` endpoint.
  * @param resolveCwd - resolves the requested cwd against known workspaces.
@@ -172,12 +191,31 @@ export async function handleGitRequest(
       const body = await readJson(req)
       const cwd = resolveCwd(bodyPath(body, 'cwd'))
       const filePath = bodyPath(body, 'path')
-      // A repository-relative path must not escape the repo.
-      if (filePath.includes('..') || filePath.startsWith('/') || filePath.includes('\\')) {
-        throw new Error('git panel: invalid path')
-      }
+      const abs = resolveRepoPath(cwd, filePath)
       const out = await run('git', ['diff', '--', filePath], { cwd, maxBuffer: 4 * 1024 * 1024 })
+      void abs
       json(res, 200, { diff: out.stdout })
+      return
+    }
+
+    if (method === 'POST' && path === '/git/read') {
+      const body = await readJson(req)
+      const cwd = resolveCwd(bodyPath(body, 'cwd'))
+      const abs = resolveRepoPath(cwd, bodyPath(body, 'path'))
+      const content = await readFile(abs, 'utf8')
+      json(res, 200, { content })
+      return
+    }
+
+    if (method === 'POST' && path === '/git/write') {
+      const body = await readJson(req)
+      const cwd = resolveCwd(bodyPath(body, 'cwd'))
+      const abs = resolveRepoPath(cwd, bodyPath(body, 'path'))
+      const content = body['content']
+      if (typeof content !== 'string') throw new Error('git panel: body field "content" must be a string')
+      if (content.length > 16 * 1024 * 1024) throw new Error('git panel: file content too large')
+      await writeFile(abs, content, 'utf8')
+      json(res, 200, { ok: true })
       return
     }
 

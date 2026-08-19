@@ -112,4 +112,60 @@ describe('git panel host service', () => {
     expect(double.status).toBe(500)
     expect(double.body.error).toContain('non-empty string')
   })
+
+  it('reads a workspace file through /git/read', async () => {
+    const double = responseDouble()
+    await handleGitRequest(
+      resolve,
+      requestDouble('/git/read', 'POST', { cwd: process.cwd(), path: 'package.json' }) as never,
+      double.res as never,
+    )
+    expect(double.status).toBe(200)
+    const body = double.body as { content: string }
+    expect(body.content).toContain('"name"')
+  })
+
+  it('rejects read paths that escape the repository', async () => {
+    for (const bad of ['../outside', '/etc/passwd', 'sub\\..\\escape']) {
+      const double = responseDouble()
+      await handleGitRequest(
+        resolve,
+        requestDouble('/git/read', 'POST', { cwd: process.cwd(), path: bad }) as never,
+        double.res as never,
+      )
+      expect(double.status).toBe(500)
+      expect(double.body.error).toContain('invalid path')
+    }
+  })
+
+  it('writes a workspace file through /git/write', async () => {
+    const fs = await import('node:fs/promises')
+    const os = await import('node:os')
+    const path = await import('node:path')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-git-write-'))
+    const target = path.join(dir, 'note.txt')
+    await fs.writeFile(target, 'before', 'utf8')
+    const cwd = dir
+    const resolver = workspaceCwdResolver([dir], process.cwd())
+    const double = responseDouble()
+    await handleGitRequest(
+      resolver,
+      requestDouble('/git/write', 'POST', { cwd, path: 'note.txt', content: 'after' }) as never,
+      double.res as never,
+    )
+    expect(double.status).toBe(200)
+    expect(await fs.readFile(target, 'utf8')).toBe('after')
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+
+  it('rejects non-string content on /git/write', async () => {
+    const double = responseDouble()
+    await handleGitRequest(
+      resolve,
+      requestDouble('/git/write', 'POST', { cwd: process.cwd(), path: 'x.txt', content: 42 }) as never,
+      double.res as never,
+    )
+    expect(double.status).toBe(500)
+    expect(double.body.error).toContain('content')
+  })
 })

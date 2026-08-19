@@ -1,17 +1,20 @@
-// Floating git panel: a composer.dock contribution pinned to the lower-right
-// (position:fixed) that shows the workspace repository the browser is
-// currently viewing — branch, working-tree changes (with per-file diff), a
-// commit box, and a push action. The host exposes `/git/*` routes registered
-// by the node half; this component is a plain fetch client that carries the
-// current workspace path so switching workspaces switches the repository.
+// Git panel: a `conversation.view` tab (the top tab ring, right after the
+// trajectory tab) showing the workspace repository the browser is currently
+// viewing — branch, working-tree changes with per-file diffs, a commit box,
+// and a push action. The host exposes `/git/*` routes registered by the node
+// half; this component is a plain fetch client carrying the current workspace
+// path, so switching workspaces switches the repository. Fetch results are
+// cached per workspace path for the panel's lifetime so switching back and
+// forth is instant.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceListState } from '@deepseek-ai/dsh-client-runtime/client'
+import { gitFetch } from './git-client.ts'
 import css from './GitPanel.module.css'
 
-/** Full component props: session runtime share + the ui-polish locale seat. */
-export type GitPanelProps = PropsRuntime<'conversation.composer.dock'> & PropsLocale<'ui-polish'>
+/** Full component props: conversation view share + the ui-polish locale seat. */
+export type GitPanelProps = PropsRuntime<'conversation.view'> & PropsLocale<'ui-polish'>
 
 /** One working-tree file from `/git/status`. */
 interface GitStatusEntry {
@@ -29,27 +32,6 @@ interface GitStatusResult {
 /** `/git/log` response. */
 interface GitLogResult {
   commits: readonly string[]
-}
-
-/** Query-encode the cwd into a `/git` URL. */
-function gitUrl(path: string, cwd: string, params?: Record<string, string>): string {
-  const search = new URLSearchParams({ cwd, ...params })
-  return `${path}?${search.toString()}`
-}
-
-/** Fetch JSON from a git panel endpoint, throwing on HTTP or body errors. */
-async function gitFetch<T>(path: string, cwd: string, init?: RequestInit): Promise<T> {
-  const body = init?.body
-  const response = await fetch(gitUrl(path, cwd), {
-    ...init,
-    headers: { 'content-type': 'application/json', ...init?.headers },
-    ...typeof body === 'string' ? { body: JSON.stringify({ ...JSON.parse(body), cwd }) } : {},
-  })
-  const payload = await response.json().catch(() => ({})) as Record<string, unknown>
-  if (!response.ok) {
-    throw new Error(typeof payload.error === 'string' ? payload.error : `git panel: HTTP ${response.status}`)
-  }
-  return payload as unknown as T
 }
 
 /** Two-letter porcelain status → short human label. */
@@ -72,57 +54,94 @@ function workspacePathOf(
   return items.find(item => item.sessionIds.includes(sessionId as never))?.path
 }
 
+/** Cached fetch payload keyed by workspace path. */
+interface GitCache {
+  cwd: string
+  status: GitStatusResult
+  commits: readonly string[]
+}
+
 /**
- * Render the floating git panel.
+ * Render the git panel as a conversation view tab.
  * @param props - composed slot props.
- * @returns the panel element tree, or nothing while collapsed.
+ * @returns the panel element tree.
  */
 export function GitPanel({ useSession, useWorkspaces, t }: GitPanelProps) {
   const sessionId = useSession(s => s.sessionId)
   const workspaceItems = useWorkspaces(s => s.items)
   const cwd = workspacePathOf(sessionId, workspaceItems)
-  const [open, setOpen] = useState(false)
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [commits, setCommits] = useState<readonly string[]>([])
   const [selected, setSelected] = useState<string | null>(null)
-  const [diff, setDiff] = useState<string | null>(null)
+  const [content, setContent] = useState<string | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const cacheRef = useRef<GitCache | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
     if (cwd === undefined) return
+    const cached = cacheRef.current
+    if (cached !== null && cached.cwd === cwd) {
+      setStatus(cached.status)
+      setCommits(cached.commits)
+      return
+    }
     setError(null)
     try {
       const [statusResult, logResult] = await Promise.all([
         gitFetch<GitStatusResult>('/git/status', cwd),
         gitFetch<GitLogResult>('/git/log', cwd),
       ])
+      cacheRef.current = { cwd, status: statusResult, commits: logResult.commits }
       setStatus(statusResult)
       setCommits(logResult.commits)
       setSelected(null)
-      setDiff(null)
+      setContent(null)
+      setFileError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
   }, [cwd])
 
+  // Fetch on mount and whenever the workspace path changes (tab switch or
+  // workspace switch). Cached results make revisit instant.
   useEffect(() => {
-    if (open && cwd !== undefined) void refresh()
-  }, [open, cwd, refresh])
+    void refresh()
+  }, [refresh])
 
-  const showDiff = async (path: string): Promise<void> => {
+  const openFile = async (path: string): Promise<void> => {
     if (cwd === undefined) return
     setSelected(path)
-    setDiff(null)
+    setContent(null)
+    setFileError(null)
     try {
-      const result = await gitFetch<{ diff: string }>('/git/diff', cwd, {
+      const result = await gitFetch<{ content: string }>('/git/read', cwd, {
         method: 'POST',
         body: JSON.stringify({ path }),
       })
-      setDiff(result.diff)
+      setContent(result.content)
     } catch (e) {
-      setDiff(`-- ${e instanceof Error ? e.message : String(e)}`)
+      setFileError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const saveFile = async (): Promise<void> => {
+    if (cwd === undefined || selected === null || content === null) return
+    setBusy(true)
+    setFileError(null)
+    try {
+      await gitFetch('/git/write', cwd, {
+        method: 'POST',
+        body: JSON.stringify({ path: selected, content }),
+      })
+      cacheRef.current = null
+      await refresh()
+    } catch (e) {
+      setFileError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -134,6 +153,7 @@ export function GitPanel({ useSession, useWorkspaces, t }: GitPanelProps) {
     try {
       await gitFetch('/git/commit', cwd, { method: 'POST', body: JSON.stringify({ message: trimmed }) })
       setMessage('')
+      cacheRef.current = null
       await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -148,6 +168,7 @@ export function GitPanel({ useSession, useWorkspaces, t }: GitPanelProps) {
     setError(null)
     try {
       await gitFetch('/git/push', cwd, { method: 'POST' })
+      cacheRef.current = null
       await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -156,27 +177,13 @@ export function GitPanel({ useSession, useWorkspaces, t }: GitPanelProps) {
     }
   }
 
-  if (!open) {
-    return (
-      <button
-        type="button" className={css.toggle} data-ui-polish-git=""
-        onClick={() => { setOpen(true) }}
-      >
-        {t('git.open')}
-      </button>
-    )
-  }
+  const entries = useMemo(() => status?.entries ?? [], [status])
 
   return (
-    <div className={css.root} role="region" aria-label={t('git.title')} data-ui-polish-git="">
-      <div className={css.header}>
+    <div className={css.view} data-ui-polish-git="">
+      <div className={css.viewHeader}>
         <span className={css.title}>{t('git.title')}</span>
-        <button
-          type="button" className={css.close} aria-label={t('git.close')}
-          onClick={() => { setOpen(false) }}
-        >
-          ×
-        </button>
+        {cwd !== undefined && <span className={css.cwd}>{cwd}</span>}
       </div>
       {cwd === undefined
         ? <div className={css.notice}>{t('git.noWorkspace')}</div>
@@ -187,49 +194,76 @@ export function GitPanel({ useSession, useWorkspaces, t }: GitPanelProps) {
               <div className={css.notice}>{t('git.notRepo')}</div>
             )}
             {status !== null && status.isRepo && (
-              <>
-                <div className={css.branch}>{status.branch}</div>
-                {status.entries.length === 0
-                  ? <div className={css.notice}>{t('git.clean')}</div>
-                  : (
-                    <ul className={css.files}>
-                      {status.entries.map(entry => (
-                        <li key={entry.path}>
-                          <button
-                            type="button" className={css.file}
-                            onClick={() => { void showDiff(entry.path) }}
-                          >
-                            <span className={css.fileStatus}>{statusLabel(entry.status)}</span>
-                            <span className={css.filePath}>{entry.path}</span>
-                          </button>
-                          {selected === entry.path && diff !== null && (
-                            <pre className={css.diff}>{diff.length > 0 ? diff : t('git.noDiff')}</pre>
-                          )}
-                        </li>
-                      ))}
+              <div className={css.columns}>
+                <div className={css.column}>
+                  <div className={css.branch}>{status.branch}</div>
+                  {entries.length === 0
+                    ? <div className={css.notice}>{t('git.clean')}</div>
+                    : (
+                      <ul className={css.files}>
+                        {entries.map(entry => (
+                          <li key={entry.path}>
+                            <button
+                              type="button" className={css.file}
+                              onClick={() => { void openFile(entry.path) }}
+                            >
+                              <span className={css.fileStatus}>{statusLabel(entry.status)}</span>
+                              <span className={css.filePath}>{entry.path}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  <div className={css.commitRow}>
+                    <input
+                      className={css.message}
+                      value={message}
+                      placeholder={t('git.commitPlaceholder')}
+                      onChange={event => { setMessage(event.target.value) }}
+                      onKeyDown={event => { if (event.key === 'Enter') void commit() }}
+                    />
+                    <button type="button" className={css.action} disabled={busy || message.trim().length === 0} onClick={() => void commit()}>
+                      {t('git.commit')}
+                    </button>
+                    <button type="button" className={css.action} disabled={busy} onClick={() => void push()}>
+                      {t('git.push')}
+                    </button>
+                  </div>
+                </div>
+                <div className={css.column}>
+                  <div className={css.sideTitle}>{t('git.logTitle')}</div>
+                  {commits.length > 0 && (
+                    <ul className={css.log}>
+                      {commits.map(line => <li key={line}>{line}</li>)}
                     </ul>
                   )}
-                <div className={css.commitRow}>
-                  <input
-                    className={css.message}
-                    value={message}
-                    placeholder={t('git.commitPlaceholder')}
-                    onChange={event => { setMessage(event.target.value) }}
-                    onKeyDown={event => { if (event.key === 'Enter') void commit() }}
-                  />
-                  <button type="button" className={css.action} disabled={busy || message.trim().length === 0} onClick={() => void commit()}>
-                    {t('git.commit')}
-                  </button>
-                  <button type="button" className={css.action} disabled={busy} onClick={() => void push()}>
-                    {t('git.push')}
-                  </button>
+                  {selected !== null && (
+                    <>
+                      <div className={css.fileHeader}>
+                        <span className={css.sideTitle}>{selected}</span>
+                        <button
+                          type="button" className={css.action}
+                          disabled={busy || content === null}
+                          onClick={() => { void saveFile() }}
+                        >
+                          {t('git.save')}
+                        </button>
+                      </div>
+                      {fileError !== null && <div className={css.error}>{fileError}</div>}
+                      {content === null
+                        ? <div className={css.notice}>…</div>
+                        : (
+                          <textarea
+                            className={css.editor}
+                            value={content}
+                            spellCheck={false}
+                            onChange={event => { setContent(event.target.value) }}
+                          />
+                        )}
+                    </>
+                  )}
                 </div>
-                {commits.length > 0 && (
-                  <ul className={css.log}>
-                    {commits.map(line => <li key={line}>{line}</li>)}
-                  </ul>
-                )}
-              </>
+              </div>
             )}
           </>
         )}
