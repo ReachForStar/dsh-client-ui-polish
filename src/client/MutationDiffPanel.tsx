@@ -1,18 +1,24 @@
 // File panel: a `conversation.view` tab (between the trajectory and Git tabs)
-// listing every file a settled tool call operated on in the session (read /
-// edit / write). Selecting a file reads its current content through the host's
-// /git/read route into an editable textarea; saving writes it back via
-// /git/write — the file is edited in place, never handed to a third-party app.
+// browsing the workspace repository's directory tree. Selecting a file reads
+// its current content through the host's /git/read route into an editable
+// textarea; saving writes it back via /git/write — the file is edited in
+// place, never handed to a third-party app. Directories expand lazily.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceListState } from '@deepseek-ai/dsh-client-runtime/client'
 import { gitFetch } from './git-client.ts'
-import { touchedFiles } from './settled-diffs.ts'
 import css from './MutationDiffPanel.module.css'
 
 /** Full component props: conversation view share + the ui-polish locale seat. */
 export type MutationDiffPanelProps = PropsRuntime<'conversation.view'> & PropsLocale<'ui-polish'>
+
+/** One directory entry from `/git/list`. */
+interface DirEntry {
+  name: string
+  type: 'dir' | 'file'
+  path: string
+}
 
 /** The workspace path owning the current session, if any. */
 function workspacePathOf(
@@ -24,7 +30,7 @@ function workspacePathOf(
 }
 
 /**
- * Render the file panel as a conversation view tab.
+ * Render the file panel as a conversation view tab browsing the workspace tree.
  * @param props - composed slot props.
  * @returns the panel element tree.
  */
@@ -32,22 +38,55 @@ export function MutationDiffPanel({ useSession, useWorkspaces, t }: MutationDiff
   const sessionId = useSession(s => s.sessionId)
   const workspaceItems = useWorkspaces(s => s.items)
   const cwd = workspacePathOf(sessionId, workspaceItems)
-  const files = useSession(s => touchedFiles(s))
+  const [rootItems, setRootItems] = useState<readonly DirEntry[] | null>(null)
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
+  const [children, setChildren] = useState<Record<string, readonly DirEntry[]>>({})
   const [selected, setSelected] = useState<string | null>(null)
   const [content, setContent] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const cacheRef = useRef<{ path: string; content: string } | null>(null)
+
+  // Load the workspace root listing on mount / workspace switch.
+  useEffect(() => {
+    setRootItems(null)
+    setExpanded(new Set())
+    setChildren({})
+    setSelected(null)
+    setContent(null)
+    if (cwd === undefined) return
+    let cancelled = false
+    gitFetch<{ items: DirEntry[] }>('/git/list', cwd, { method: 'POST', body: JSON.stringify({}) })
+      .then(result => { if (!cancelled) setRootItems(result.items) })
+      .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)) })
+    return () => { cancelled = true }
+  }, [cwd])
+
+  const toggleDir = useCallback(async (path: string): Promise<void> => {
+    if (cwd === undefined) return
+    const next = new Set(expanded)
+    if (next.has(path)) {
+      next.delete(path)
+      setExpanded(next)
+      return
+    }
+    // Expand: fetch children (once), then mark expanded.
+    next.add(path)
+    setExpanded(next)
+    if (children[path] !== undefined) return
+    try {
+      const result = await gitFetch<{ items: DirEntry[] }>('/git/list', cwd, {
+        method: 'POST',
+        body: JSON.stringify({ dir: path }),
+      })
+      setChildren(prev => ({ ...prev, [path]: result.items }))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [cwd, expanded, children])
 
   const openFile = useCallback(async (path: string): Promise<void> => {
     if (cwd === undefined) return
     setSelected(path)
-    const cached = cacheRef.current
-    if (cached !== null && cached.path === path) {
-      setContent(cached.content)
-      setError(null)
-      return
-    }
     setContent(null)
     setError(null)
     try {
@@ -55,19 +94,11 @@ export function MutationDiffPanel({ useSession, useWorkspaces, t }: MutationDiff
         method: 'POST',
         body: JSON.stringify({ path }),
       })
-      cacheRef.current = { path, content: result.content }
       setContent(result.content)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
   }, [cwd])
-
-  // When a workspace switch changes cwd, the cached content belongs to the old
-  // workspace; drop it and re-read the selected file if any.
-  useEffect(() => {
-    cacheRef.current = null
-    if (selected !== null) void openFile(selected)
-  }, [cwd, openFile, selected])
 
   const saveFile = async (): Promise<void> => {
     if (cwd === undefined || selected === null || content === null) return
@@ -78,12 +109,47 @@ export function MutationDiffPanel({ useSession, useWorkspaces, t }: MutationDiff
         method: 'POST',
         body: JSON.stringify({ path: selected, content }),
       })
-      cacheRef.current = { path: selected, content }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
     }
+  }
+
+  /** Render one entry; directories recurse into their fetched children. */
+  const renderEntry = (entry: DirEntry): ReactNode => {
+    if (entry.type === 'dir') {
+      const open = expanded.has(entry.path)
+      const kids = children[entry.path]
+      return (
+        <li key={entry.path}>
+          <button
+            type="button" className={css.dir}
+            onClick={() => { void toggleDir(entry.path) }}
+          >
+            <span className={css.dirArrow}>{open ? '▾' : '▸'}</span>
+            <span className={css.filePath}>{entry.name}/</span>
+          </button>
+          {open && (
+            <ul className={css.nested}>
+              {kids === undefined
+                ? <li className={css.notice}>…</li>
+                : kids.map(kid => renderEntry(kid))}
+            </ul>
+          )}
+        </li>
+      )
+    }
+    return (
+      <li key={entry.path}>
+        <button
+          type="button" className={css.file}
+          onClick={() => { void openFile(entry.path) }}
+        >
+          <span className={css.filePath}>{entry.name}</span>
+        </button>
+      </li>
+    )
   }
 
   return (
@@ -97,23 +163,16 @@ export function MutationDiffPanel({ useSession, useWorkspaces, t }: MutationDiff
         : (
           <div className={css.columns}>
             <div className={css.column}>
-              {files.length === 0
-                ? <div className={css.notice}>{t('diff.empty')}</div>
-                : (
-                  <ul className={css.files}>
-                    {files.map(file => (
-                      <li key={file.path}>
-                        <button
-                          type="button" className={css.file}
-                          onClick={() => { void openFile(file.path) }}
-                        >
-                          <span className={css.fileStatus}>{file.tool}</span>
-                          <span className={css.filePath}>{file.path}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+              {error !== null && <div className={css.error}>{error}</div>}
+              {rootItems === null
+                ? <div className={css.notice}>…</div>
+                : rootItems.length === 0
+                  ? <div className={css.notice}>{t('diff.empty')}</div>
+                  : (
+                    <ul className={css.files}>
+                      {rootItems.map(entry => renderEntry(entry))}
+                    </ul>
+                  )}
             </div>
             <div className={css.column}>
               {selected === null
@@ -130,7 +189,6 @@ export function MutationDiffPanel({ useSession, useWorkspaces, t }: MutationDiff
                         {t('diff.save')}
                       </button>
                     </div>
-                    {error !== null && <div className={css.error}>{error}</div>}
                     {content === null
                       ? <div className={css.notice}>…</div>
                       : (

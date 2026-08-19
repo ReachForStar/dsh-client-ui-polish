@@ -21,9 +21,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings-general/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // Type-only: pulls the ui-conversation SlotMap merge (the composer.dock entry).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { BACKGROUND_SETTINGS_NAMESPACE, type PolishSettings } from '../background-settings.ts'
+import { BACKGROUND_SETTINGS_NAMESPACE, COMPACTION_RATIO_FIELD, type PolishSettings } from '../background-settings.ts'
 import { BackgroundRuntime } from './background-runtime.ts'
 import { BackgroundRow, type BackgroundRowInjected } from './BackgroundRow.tsx'
+import { CompactionRow, type CompactionRowInjected } from './CompactionRow.tsx'
 import { createBackgroundRowStore } from './settings-store.ts'
 import { createModelIndex, modelIndexDefinition, type ModelIndex } from './model-index.ts'
 import { StatsFloat } from './StatsFloat.tsx'
@@ -131,6 +132,22 @@ export function apply(ctx: ClientContext): void {
     locale: NS,
     inject: injected,
   }, BackgroundRow))
+
+  // Automatic-compaction threshold row: reads and writes the durable
+  // ui-polish settings field the node half's per-step control consumes.
+  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+    name: 'settings.general.item',
+    id: 'polish-compaction',
+    order: 40,
+    locale: NS,
+    inject: (): CompactionRowInjected => ({
+      currentRatio: host.getSnapshot().value?.compactionThresholdRatio ?? null,
+      setRatio: (ratio) => {
+        if (ratio === null) void host.unset(COMPACTION_RATIO_FIELD)
+        else void host.set(COMPACTION_RATIO_FIELD, ratio)
+      },
+    }),
+  }, CompactionRow))
 
   ctx.slots.inject('conversation.composer.dock', function* () {
     yield ctx.slots.register({

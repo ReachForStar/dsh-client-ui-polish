@@ -9,6 +9,7 @@ import type {} from '@deepseek-ai/dsh-workspace'
 import {
   BACKGROUND_SETTINGS_NAMESPACE, PolishSettingsSchema,
 } from './background-settings.ts'
+import { installCompactionControl } from './compaction-control.ts'
 import { handleGitRequest, workspaceCwdResolver } from './git-service.ts'
 
 export {
@@ -32,7 +33,8 @@ const FALLBACK_CWD = process.cwd()
  */
 export function apply(ctx: Context): void {
   ctx.inject(['settings'], (settingsCtx) => {
-    settingsCtx.settings.register(NAMESPACE, PolishSettingsSchema)
+    const scope = settingsCtx.settings.register(NAMESPACE, PolishSettingsSchema)
+    installCompactionControl(settingsCtx, scope)
   })
   ctx.inject(['webServer'], (serverCtx) => {
     const webServer = serverCtx.webServer

@@ -168,4 +168,48 @@ describe('git panel host service', () => {
     expect(double.status).toBe(500)
     expect(double.body.error).toContain('content')
   })
+
+  it('lists the workspace root with files and directories', async () => {
+    const double = responseDouble()
+    await handleGitRequest(
+      resolve,
+      requestDouble('/git/list', 'POST', { cwd: process.cwd() }) as never,
+      double.res as never,
+    )
+    expect(double.status).toBe(200)
+    const body = double.body as { items: { name: string; type: 'dir' | 'file'; path: string }[] }
+    expect(Array.isArray(body.items)).toBe(true)
+    expect(body.items.length).toBeGreaterThan(0)
+    expect(body.items.some(item => item.name === 'package.json' && item.type === 'file')).toBe(true)
+    expect(body.items.some(item => item.type === 'dir')).toBe(true)
+    // Directories sort before files.
+    const firstDir = body.items.findIndex(item => item.type === 'dir')
+    const firstFile = body.items.findIndex(item => item.type === 'file')
+    expect(firstDir).not.toBe(-1)
+    expect(firstFile).toBeGreaterThan(firstDir)
+  })
+
+  it('lists a workspace subdirectory', async () => {
+    const double = responseDouble()
+    await handleGitRequest(
+      resolve,
+      requestDouble('/git/list', 'POST', { cwd: process.cwd(), dir: 'src' }) as never,
+      double.res as never,
+    )
+    expect(double.status).toBe(200)
+    const body = double.body as { items: { path: string }[] }
+    expect(body.items.length).toBeGreaterThan(0)
+    expect(body.items.every(item => item.path.startsWith('src/'))).toBe(true)
+  })
+
+  it('rejects listing outside the repository', async () => {
+    const double = responseDouble()
+    await handleGitRequest(
+      resolve,
+      requestDouble('/git/list', 'POST', { cwd: process.cwd(), dir: '../outside' }) as never,
+      double.res as never,
+    )
+    expect(double.status).toBe(500)
+    expect(double.body.error).toContain('invalid path')
+  })
 })

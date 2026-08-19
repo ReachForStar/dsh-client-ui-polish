@@ -33,6 +33,10 @@ export const zh = {
   'background.remove': '移除',
   'background.tooLarge': '图片过大，请选择不超过 2MB 的图片',
   'background.notImage': '请选择图片文件',
+  // Automatic compaction threshold row.
+  'compaction.title': '自动压缩上下文',
+  'compaction.saved': '已保存',
+  'compaction.hint': '上下文占用达到所选比例时自动压缩。未设置时使用 80% 默认值。',
   // File panel (conversation.view tab).
   'diff.tab': '文件',
   'diff.title': '文件面板',
@@ -75,6 +79,9 @@ export const en = {
   'background.remove': 'Remove',
   'background.tooLarge': 'Image is too large; choose one under 2MB',
   'background.notImage': 'Choose an image file',
+  'compaction.title': 'Auto-compact context',
+  'compaction.saved': 'Saved',
+  'compaction.hint': 'Compacts automatically when context usage reaches the selected ratio. Unset uses the 80% default.',
   'diff.tab': 'Files',
   'diff.title': 'File panel',
   'diff.empty': 'No tool-operated files in this session yet',
