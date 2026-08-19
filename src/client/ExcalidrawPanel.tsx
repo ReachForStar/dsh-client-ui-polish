@@ -28,6 +28,14 @@ interface ScenePayload {
   appState: Record<string, unknown>
 }
 
+/** The DSH body attribute the theme presenter toggles for the dark palette. */
+const DARK_ATTRIBUTE = 'data-ds-dark-theme'
+
+/** Resolve the current DSH theme ('dark' when the body attribute is present). */
+function currentTheme(): 'dark' | 'light' {
+  return document.body.hasAttribute(DARK_ATTRIBUTE) ? 'dark' : 'light'
+}
+
 /**
  * Render the Excalidraw canvas as a conversation view tab.
  * @param props - composed slot props.
@@ -84,6 +92,11 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
         loadedScene.current = false
         // Force reload by toggling a state the load effect keys on.
         setError(null)
+        // Forward the current DSH theme so the canvas matches on first paint.
+        iframeRef.current?.contentWindow?.postMessage(
+          { source: 'dsh-excalidraw-parent', type: 'theme', theme: currentTheme() },
+          '*',
+        )
         if (cwd !== undefined) {
           fetch('/scene/current', {
             method: 'POST',
@@ -127,6 +140,21 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
   }, [cwd])
+
+  // Follow the DSH theme: the ui-layout presenter toggles
+  // `body[data-ds-dark-theme]`, so observe that attribute and forward each
+  // change to the iframe (which updates Excalidraw's own theme prop).
+  useEffect(() => {
+    const sendTheme = (): void => {
+      iframeRef.current?.contentWindow?.postMessage(
+        { source: 'dsh-excalidraw-parent', type: 'theme', theme: currentTheme() },
+        '*',
+      )
+    }
+    const observer = new MutationObserver(sendTheme)
+    observer.observe(document.body, { attributes: true, attributeFilter: [DARK_ATTRIBUTE] })
+    return () => { observer.disconnect() }
+  }, [])
 
   return (
     <div className={css.view} data-ui-polish-excalidraw="">

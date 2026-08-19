@@ -1,10 +1,11 @@
 // Standalone Excalidraw application served inside an <iframe> at
 // /excalidraw/app.js. It talks to the embedding page over postMessage:
-//   parent -> iframe: { type: 'load', scene: { elements, appState } }
+//   parent -> iframe: { type: 'load', scene: { elements, appState } },
+//                     { type: 'theme', theme: 'dark' | 'light' }
 //   iframe -> parent: { type: 'ready' }, { type: 'change', scene }
-// The parent owns persistence (workspace scene files); this app is a pure
-// editor. Excalidraw + mermaid are bundled here so the plugin's own client
-// bundle stays light.
+// The parent owns persistence (workspace scene files) and forwards the DSH
+// theme; this app is a pure editor. Excalidraw + mermaid are bundled here so
+// the plugin's own client bundle stays light.
 
 import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -16,6 +17,9 @@ import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 // tag at app boot.
 import '@excalidraw/excalidraw/dist/prod/index.css'
 import './style.css'
+
+/** Excalidraw's theme prop: either palette. */
+type CanvasTheme = 'light' | 'dark'
 
 /** A scene payload: the serializable Excalidraw scene (elements + appState). */
 interface ScenePayload {
@@ -65,12 +69,20 @@ function post(message: Record<string, unknown>): void {
 function App(): React.ReactElement {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null)
   const [ready, setReady] = useState(false)
+  // Default to the browser's own scheme; the parent overrides it with the DSH
+  // theme as soon as it observes it (see the 'theme' message below).
+  const [theme, setTheme] = useState<CanvasTheme>(() =>
+    typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
 
-  // Load a scene sent by the parent once the API is available.
+  // Load a scene and follow the DSH theme sent by the parent.
   useEffect(() => {
     const onMessage = (event: MessageEvent): void => {
       const data = event.data as Record<string, unknown>
       if (data?.source !== 'dsh-excalidraw-parent') return
+      if (data.type === 'theme' && (data.theme === 'dark' || data.theme === 'light')) {
+        setTheme(data.theme)
+        return
+      }
       if (data.type === 'load' && apiRef.current !== null) {
         const scene = data.scene as ScenePayload | undefined
         if (scene !== undefined) {
@@ -85,10 +97,16 @@ function App(): React.ReactElement {
     return () => window.removeEventListener('message', onMessage)
   }, [])
 
-  // Announce readiness, then ask the parent for the current scene.
+  // Announce readiness, then ask the parent for the current scene and theme.
   useEffect(() => {
     if (ready) post({ type: 'ready' })
   }, [ready])
+
+  // Mirror the active theme onto the shell background (pre-paint interval).
+  useEffect(() => {
+    if (theme === 'dark') document.body.setAttribute('data-canvas-theme', 'dark')
+    else document.body.removeAttribute('data-canvas-theme')
+  }, [theme])
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
@@ -97,7 +115,7 @@ function App(): React.ReactElement {
         onChange={(elements, appState) => {
           post({ type: 'change', scene: { elements, appState: sanitizeAppState(appState as Record<string, unknown>) } })
         }}
-        theme="dark"
+        theme={theme}
       />
     </div>
   )
