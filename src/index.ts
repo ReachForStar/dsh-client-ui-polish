@@ -67,12 +67,7 @@ export function apply(ctx: Context): void {
       path: '/bg',
       handler: (req, res) => handleBackgroundRequest(BACKGROUND_IMAGE_PATH, MAX_BACKGROUND_IMAGE_BYTES, req, res),
     }), 'ui-polish: background image route')
-    // Excalidraw: serve the standalone canvas app and its workspace scenes.
-    serverCtx.effect(() => webServer.register({
-      kind: 'prefix',
-      path: '/excalidraw',
-      handler: (req, res) => handleExcalidrawRequest(resolveWorkspaceCwd(), req, res),
-    }), 'ui-polish: excalidraw app route')
+    // Excalidraw: persist workspace scenes for the embedded whiteboard.
     serverCtx.effect(() => webServer.register({
       kind: 'prefix',
       path: '/scene',

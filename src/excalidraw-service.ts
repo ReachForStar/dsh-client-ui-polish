@@ -1,11 +1,9 @@
 /**
- * Excalidraw canvas host service: serves the standalone whiteboard app
- * (lib/excalidraw-app/app.js, built separately with Excalidraw + mermaid
- * inlined) and persists workspace scene files. Exposed routes (all under the
- * `/excalidraw` and `/scene` prefixes, registered by the plugin apply):
+ * Excalidraw canvas host service: persists workspace scene files for the
+ * embedded whiteboard (the Excalidraw component runs in the client bundle
+ * directly — no separate page). Exposed routes (all under the `/scene`
+ * prefix, registered by the plugin apply):
  *
- *  - `GET  /excalidraw/`        → the iframe HTML shell.
- *  - `GET  /excalidraw/app.js`  → the standalone app bundle (ESM).
  *  - `POST /scene/current` {cwd}    → the workspace scene JSON, or 404.
  *  - `POST /scene/write` {cwd, scene} → overwrite the workspace scene file.
  *
@@ -18,65 +16,12 @@
  */
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { existsSync, readFileSync } from 'node:fs'
-import { createHash } from 'node:crypto'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { normalizeSlashes, type GitCwdResolver } from './git-service.ts'
 
 /** Relative scene file inside a workspace. */
 export const SCENE_RELATIVE = join('.dsh', 'excalidraw', 'scene.json')
-
-/**
- * The iframe HTML shell. The app bundle is referenced with a content-hash
- * query (`?v=<hash>`) so a redeployed bundle always busts any browser cache —
- * the earlier cache-control: no-cache alone let stale app.js survive in some
- * browsers, leaving the canvas broken after an update.
- */
-function htmlShell(appHash: string): string {
-  return `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Excalidraw</title>
-<style>html,body,#root{margin:0;height:100%;overflow:hidden;background:#1e1e1e}</style>
-</head>
-<body>
-<div id="root"></div>
-<script type="module" src="/excalidraw/app.js?v=${appHash}"></script>
-</body>
-</html>
-`
-}
-
-/** Locate the standalone app bundle relative to this module (src or lib). */
-function appJsPath(): string {
-  const here = dirname(fileURLToPath(import.meta.url))
-  const candidates = [
-    // Built layout: <pkg>/lib/excalidraw-app/app.js next to lib/excalidraw-service.js
-    resolve(here, 'excalidraw-app', 'app.js'),
-    // Source layout (tsx run): <pkg>/src/excalidraw-service.ts → <pkg>/lib/...
-    resolve(here, '..', 'lib', 'excalidraw-app', 'app.js'),
-  ]
-  const found = candidates.find(candidate => existsSync(candidate))
-  // candidates always has an entry; the non-null assertion is safe.
-  return found ?? candidates[0]!
-}
-
-/** Short content hash of the app bundle, used to bust stale caches. */
-let appHashCache: string | null = null
-function appHash(): string {
-  if (appHashCache !== null) return appHashCache
-  try {
-    const bytes = readFileSync(appJsPath())
-    appHashCache = createHash('sha256').update(bytes).digest('hex').slice(0, 12)
-  } catch {
-    appHashCache = 'unknown'
-  }
-  return appHashCache
-}
 
 /** Write a JSON response with the given status code. */
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -103,7 +48,7 @@ function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
 }
 
 /**
- * Handle one `/excalidraw` or `/scene` request.
+ * Handle one `/scene` request.
  * @param resolveCwd - workspace-path resolver (see {@link GitCwdResolver}).
  * @param req - incoming HTTP request.
  * @param res - server response.
@@ -118,31 +63,6 @@ export async function handleExcalidrawRequest(
   const method = req.method ?? 'GET'
 
   try {
-    // Serve the iframe HTML shell (bundled with a content-hash query so a
-    // redeployed app.js always busts stale browser caches).
-    if (method === 'GET' && path === '/excalidraw/') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      res.end(htmlShell(appHash()))
-      return
-    }
-
-    // Serve the standalone app bundle. The file is large (~12MB); stream it.
-    // Cacheable forever because the shell references it by content hash.
-    if (method === 'GET' && path === '/excalidraw/app.js') {
-      const file = appJsPath()
-      try {
-        const bytes = await readFile(file)
-        res.writeHead(200, {
-          'content-type': 'text/javascript; charset=utf-8',
-          'cache-control': 'public, max-age=31536000, immutable',
-        })
-        res.end(bytes)
-      } catch {
-        json(res, 500, { error: 'excalidraw: app bundle not built (run pnpm run build)' })
-      }
-      return
-    }
-
     // Read the workspace scene file (404 when none exists yet).
     if (method === 'POST' && path === '/scene/current') {
       const body = await readJson(req)

@@ -39,21 +39,11 @@ function requestDouble(path: string, method: string, body?: unknown) {
 }
 
 describe('excalidraw host service', () => {
-  it('serves the iframe HTML shell at /excalidraw/', async () => {
+  it('rejects the removed /excalidraw/ route with 404', async () => {
     const double = responseDouble()
     await handleExcalidrawRequest(resolverFor('D:/ws'), requestDouble('/excalidraw/', 'GET') as never, double.res as never)
-    expect(double.status).toBe(200)
-    expect(double.body).toContain('<script type="module" src="/excalidraw/app.js?v=')
-  })
-
-  it('serves the standalone app bundle at /excalidraw/app.js', async () => {
-    const double = responseDouble()
-    await handleExcalidrawRequest(resolverFor('D:/ws'), requestDouble('/excalidraw/app.js', 'GET') as never, double.res as never)
-    // The bundle is built by the packaging step; when absent the route errors
-    // with 500 instead of crashing. Both are acceptable outcomes for a unit
-    // test that exercises routing, so assert the status is a server response.
-    expect(double.status).toBeGreaterThanOrEqual(200)
-    expect(double.status).toBeLessThan(600)
+    expect(double.status).toBe(404)
+    expect(double.json.error).toContain('unknown route')
   })
 
   it('rejects unknown routes with 404', async () => {

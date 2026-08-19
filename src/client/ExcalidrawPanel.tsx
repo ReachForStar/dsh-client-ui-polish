@@ -1,11 +1,16 @@
-// Excalidraw canvas view tab: embeds the standalone Excalidraw application
-// (built separately at lib/excalidraw-app/app.js, ~12MB with mermaid support)
-// in an <iframe> served at /excalidraw/. The iframe talks over postMessage:
-// this panel loads the workspace scene file and forwards it in, receives
-// change notifications, and persists them back — the heavy editor never loads
-// into the plugin's own client bundle.
+// Excalidraw canvas view tab: embeds the Excalidraw React component directly
+// (no iframe, no separate page) so the whiteboard lives in the DSH document
+// and follows its theme natively. The panel loads the workspace scene file
+// through /scene/current, hands it to Excalidraw's imperative API, and persists
+// change notifications back via /scene/write. Excalidraw + mermaid are inlined
+// into the plugin client bundle; react/react-dom come from the platform.
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Excalidraw } from '@excalidraw/excalidraw'
+import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
+// Excalidraw ships no auto-injected stylesheet; the tsdown plain-css plugin
+// inlines this exact specifier into a <style> tag in the client bundle.
+import '@excalidraw/excalidraw/dist/prod/index.css'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceListState } from '@deepseek-ai/dsh-client-runtime/client'
 import css from './ExcalidrawPanel.module.css'
@@ -31,13 +36,54 @@ interface ScenePayload {
 /** The DSH body attribute the theme presenter toggles for the dark palette. */
 const DARK_ATTRIBUTE = 'data-ds-dark-theme'
 
-/** Resolve the current DSH theme ('dark' when the body attribute is present). */
-function currentTheme(): 'dark' | 'light' {
-  return document.body.hasAttribute(DARK_ATTRIBUTE) ? 'dark' : 'light'
+/**
+ * AppState fields worth persisting: the document-level appearance/geometry
+ * only. Live runtime state (selection, active tool, editing, dialogs) must not
+ * round-trip; Excalidraw supplies correct defaults for it.
+ */
+const PERSISTED_APPSTATE_KEYS = new Set([
+  'viewBackgroundColor',
+  'theme',
+  'gridSize',
+  'gridStep',
+  'exportBackground',
+  'exportScale',
+  'exportEmbedScene',
+  'exportWithDarkMode',
+  'currentItemStrokeColor',
+  'currentItemBackgroundColor',
+  'currentItemFillStyle',
+  'currentItemStrokeWidth',
+  'currentItemStrokeStyle',
+  'currentItemRoughness',
+  'currentItemOpacity',
+  'currentItemFontFamily',
+  'currentItemFontSize',
+  'currentItemTextAlign',
+  'currentItemStartArrowhead',
+  'currentItemEndArrowhead',
+  'currentItemRoundness',
+  'currentItemArrowType',
+  'scrollX',
+  'scrollY',
+  'zoom',
+  'name',
+])
+
+/** Keep only the persistable document subset of an AppState record. */
+function sanitizeAppState(appState: object): Record<string, unknown> {
+  const clean: Record<string, unknown> = {}
+  for (const key of PERSISTED_APPSTATE_KEYS) {
+    const value = (appState as Record<string, unknown>)[key]
+    if (value === undefined) continue
+    if (value instanceof Map || value instanceof Set) continue
+    clean[key] = value
+  }
+  return clean
 }
 
 /**
- * Render the Excalidraw canvas as a conversation view tab.
+ * Render the Excalidraw canvas as a conversation view tab, embedded directly.
  * @param props - composed slot props.
  * @returns the panel element tree.
  */
@@ -45,116 +91,89 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
   const sessionId = useSession(s => s.sessionId)
   const workspaceItems = useWorkspaces(s => s.items)
   const cwd = workspacePathOf(sessionId, workspaceItems)
-  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const apiRef = useRef<ExcalidrawImperativeAPI | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const frameReady = useRef(false)
-  const loadedScene = useRef(false)
+  const loadedOnce = useRef(false)
   const saveTimer = useRef<number | null>(null)
+  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
+    document.body.hasAttribute(DARK_ATTRIBUTE) ? 'dark' : 'light')
 
-  // Load the workspace scene file and forward it to the iframe once ready.
+  // Follow the DSH theme natively (same document, no postMessage).
   useEffect(() => {
-    if (cwd === undefined || !frameReady.current) return
-    let cancelled = false
-    setError(null)
+    const sync = (): void => {
+      setTheme(document.body.hasAttribute(DARK_ATTRIBUTE) ? 'dark' : 'light')
+    }
+    const observer = new MutationObserver(sync)
+    observer.observe(document.body, { attributes: true, attributeFilter: [DARK_ATTRIBUTE] })
+    return () => { observer.disconnect() }
+  }, [])
+
+  // Load the workspace scene once the imperative API is ready.
+  const loadScene = useCallback((api: ExcalidrawImperativeAPI): void => {
+    if (cwd === undefined) return
     fetch('/scene/current', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ cwd }),
     })
       .then(async response => {
+        if (response.status === 404) return // blank start
         const body = await response.json().catch(() => ({})) as Record<string, unknown>
-        if (cancelled) return
-        if (response.status === 404) {
-          // No scene yet — start blank.
-          loadedScene.current = true
-          return
-        }
         if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${response.status}`)
-        loadedScene.current = true
-        iframeRef.current?.contentWindow?.postMessage(
-          { source: 'dsh-excalidraw-parent', type: 'load', scene: body },
-          '*',
-        )
+        const scene = body as unknown as ScenePayload
+        api.updateScene({
+          elements: (scene.elements ?? []) as never,
+          appState: sanitizeAppState(scene.appState ?? {}) as never,
+        })
       })
-      .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)) })
-    return () => { cancelled = true }
-  }, [cwd, frameReady])
-
-  // Communicate with the iframe: on ready, (re)load; on change, save.
-  useEffect(() => {
-    const onMessage = (event: MessageEvent): void => {
-      const data = event.data as Record<string, unknown>
-      if (data?.source !== 'dsh-excalidraw') return
-      if (data.type === 'ready') {
-        frameReady.current = true
-        // Re-run the load effect (scene may be waiting for the frame).
-        loadedScene.current = false
-        // Force reload by toggling a state the load effect keys on.
-        setError(null)
-        // Forward the current DSH theme so the canvas matches on first paint.
-        iframeRef.current?.contentWindow?.postMessage(
-          { source: 'dsh-excalidraw-parent', type: 'theme', theme: currentTheme() },
-          '*',
-        )
-        if (cwd !== undefined) {
-          fetch('/scene/current', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ cwd }),
-          })
-            .then(async response => {
-              const body = await response.json().catch(() => ({})) as Record<string, unknown>
-              if (response.status === 404) return // blank start
-              if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${response.status}`)
-              iframeRef.current?.contentWindow?.postMessage(
-                { source: 'dsh-excalidraw-parent', type: 'load', scene: body },
-                '*',
-              )
-            })
-            .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-        }
-        return
-      }
-      if (data.type === 'change' && cwd !== undefined) {
-        const scene = data.scene as ScenePayload | undefined
-        if (scene === undefined) return
-        // Debounced save to the workspace scene file.
-        if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
-        saveTimer.current = window.setTimeout(() => {
-          setSaving(true)
-          fetch('/scene/write', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ cwd, scene: JSON.stringify(scene) }),
-          })
-            .then(response => response.json())
-            .then((body: Record<string, unknown>) => {
-              if (body['ok'] !== true) throw new Error(typeof body.error === 'string' ? body.error : 'save failed')
-            })
-            .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-            .finally(() => { setSaving(false) })
-        }, 800)
-      }
-    }
-    window.addEventListener('message', onMessage)
-    return () => window.removeEventListener('message', onMessage)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [cwd])
 
-  // Follow the DSH theme: the ui-layout presenter toggles
-  // `body[data-ds-dark-theme]`, so observe that attribute and forward each
-  // change to the iframe (which updates Excalidraw's own theme prop).
+  // Reset the load guard when the workspace changes.
   useEffect(() => {
-    const sendTheme = (): void => {
-      iframeRef.current?.contentWindow?.postMessage(
-        { source: 'dsh-excalidraw-parent', type: 'theme', theme: currentTheme() },
-        '*',
-      )
+    loadedOnce.current = false
+  }, [cwd])
+
+  const handleApi = useCallback((api: ExcalidrawImperativeAPI): void => {
+    apiRef.current = api
+    if (!loadedOnce.current && cwd !== undefined) {
+      loadedOnce.current = true
+      loadScene(api)
     }
-    const observer = new MutationObserver(sendTheme)
-    observer.observe(document.body, { attributes: true, attributeFilter: [DARK_ATTRIBUTE] })
-    return () => { observer.disconnect() }
-  }, [])
+  }, [cwd, loadScene])
+
+  // Persist change notifications back to the workspace scene file (debounced).
+  const handleChange = useCallback((elements: readonly unknown[], appState: object): void => {
+    if (cwd === undefined) return
+    const scene: ScenePayload = { elements: [...elements], appState: sanitizeAppState(appState) }
+    if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
+    saveTimer.current = window.setTimeout(() => {
+      setSaving(true)
+      fetch('/scene/write', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd, scene: JSON.stringify(scene) }),
+      })
+        .then(response => response.json())
+        .then((body: Record<string, unknown>) => {
+          if (body['ok'] !== true) throw new Error(typeof body.error === 'string' ? body.error : 'save failed')
+        })
+        .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+        .finally(() => { setSaving(false) })
+    }, 800)
+  }, [cwd])
+
+  const frame = useMemo(() => {
+    if (cwd === undefined) return null
+    return (
+      <Excalidraw
+        excalidrawAPI={handleApi}
+        onChange={handleChange}
+        theme={theme}
+      />
+    )
+  }, [cwd, handleApi, handleChange, theme])
 
   return (
     <div className={css.view} data-ui-polish-excalidraw="">
@@ -166,16 +185,7 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
       {error !== null && <div className={css.error}>{error}</div>}
       {cwd === undefined
         ? <div className={css.notice}>{t('git.noWorkspace')}</div>
-        : (
-          <div className={css.canvas}>
-            <iframe
-              ref={iframeRef}
-              className={css.frame}
-              src="/excalidraw/"
-              title={t('excalidraw.title')}
-            />
-          </div>
-        )}
+        : <div className={css.canvas}>{frame}</div>}
     </div>
   )
 }

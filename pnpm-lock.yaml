@@ -7,10 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      '@excalidraw/excalidraw':
-        specifier: ^0.18.1
-        version: 0.18.1(@types/react@18.3.31)(immer@10.1.1)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.1
@@ -84,6 +80,9 @@ importers:
       '@deepseek-ai/schemastery':
         specifier: 3.18.1
         version: 3.18.1
+      '@excalidraw/excalidraw':
+        specifier: ^0.18.1
+        version: 0.18.1(@types/react@18.3.31)(immer@10.1.1)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
       '@testing-library/react':
         specifier: ^16.1.0
         version: 16.3.2(@testing-library/dom@10.4.1)(@types/react@18.3.31)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
