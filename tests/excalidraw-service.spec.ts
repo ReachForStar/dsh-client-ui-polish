@@ -43,7 +43,7 @@ describe('excalidraw host service', () => {
     const double = responseDouble()
     await handleExcalidrawRequest(resolverFor('D:/ws'), requestDouble('/excalidraw/', 'GET') as never, double.res as never)
     expect(double.status).toBe(200)
-    expect(double.body).toContain('<script type="module" src="/excalidraw/app.js">')
+    expect(double.body).toContain('<script type="module" src="/excalidraw/app.js?v=')
   })
 
   it('serves the standalone app bundle at /excalidraw/app.js', async () => {

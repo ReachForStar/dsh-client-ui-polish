@@ -28,33 +28,51 @@ interface ScenePayload {
 }
 
 /**
- * AppState fields that are live runtime objects (Map/Set/handles) and can
- * never survive JSON persistence. The parent persists the scene with
- * JSON.stringify, which turns a Map or Set into `{}` — reloading then feeds
- * e.g. `collaborators: {}` into code that calls `.forEach`, crashing the
- * canvas. Strip them on both directions: never send them up, and drop any
- * that a legacy scene file may already contain.
+ * AppState fields that are safe to persist and restore: the document-level
+ * appearance/geometry the user configures, NOT live runtime state. Everything
+ * else — collaborators/followedBy/pointers (Map/Set/handles that JSON mangles
+ * into `{}`), selectedElementIds, activeTool, editing* state, showWelcomeScreen,
+ * openDialog, and similar transient state — must never round-trip: persisting
+ * it corrupts the next load (e.g. `collaborators: {}` crashes `.forEach`, and
+ * a stale `showWelcomeScreen: true` or `editingLinearElement` wedges the
+ * canvas). Keep the whitelist; Excalidraw supplies correct defaults for the
+ * rest.
  */
-const NON_PERSISTED_APPSTATE_KEYS = new Set([
-  'collaborators',
-  'followedBy',
-  'pointers',
-  'imageCache',
-  'originalElements',
-  '_cache',
-  'fileHandle',
-  'selectedLinearElement',
-  'suggestedBindings',
-  'startBoundElement',
-  'cursorButton',
-  'editingElement',
+const PERSISTED_APPSTATE_KEYS = new Set([
+  'viewBackgroundColor',
+  'theme',
+  'gridSize',
+  'gridStep',
+  'exportBackground',
+  'exportScale',
+  'exportEmbedScene',
+  'exportWithDarkMode',
+  'currentItemStrokeColor',
+  'currentItemBackgroundColor',
+  'currentItemFillStyle',
+  'currentItemStrokeWidth',
+  'currentItemStrokeStyle',
+  'currentItemRoughness',
+  'currentItemOpacity',
+  'currentItemFontFamily',
+  'currentItemFontSize',
+  'currentItemTextAlign',
+  'currentItemStartArrowhead',
+  'currentItemEndArrowhead',
+  'currentItemRoundness',
+  'currentItemArrowType',
+  'scrollX',
+  'scrollY',
+  'zoom',
+  'name',
 ])
 
-/** Keep only the JSON-persistable subset of an AppState record. */
+/** Keep only the JSON-persistable document subset of an AppState record. */
 function sanitizeAppState(appState: Record<string, unknown>): Record<string, unknown> {
   const clean: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(appState)) {
-    if (NON_PERSISTED_APPSTATE_KEYS.has(key)) continue
+  for (const key of PERSISTED_APPSTATE_KEYS) {
+    const value = appState[key]
+    if (value === undefined) continue
     if (value instanceof Map || value instanceof Set) continue
     clean[key] = value
   }

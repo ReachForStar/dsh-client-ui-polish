@@ -18,7 +18,8 @@
  */
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -27,8 +28,14 @@ import { normalizeSlashes, type GitCwdResolver } from './git-service.ts'
 /** Relative scene file inside a workspace. */
 export const SCENE_RELATIVE = join('.dsh', 'excalidraw', 'scene.json')
 
-/** The iframe HTML shell referencing the standalone app bundle. */
-const HTML_SHELL = `<!doctype html>
+/**
+ * The iframe HTML shell. The app bundle is referenced with a content-hash
+ * query (`?v=<hash>`) so a redeployed bundle always busts any browser cache —
+ * the earlier cache-control: no-cache alone let stale app.js survive in some
+ * browsers, leaving the canvas broken after an update.
+ */
+function htmlShell(appHash: string): string {
+  return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -38,10 +45,11 @@ const HTML_SHELL = `<!doctype html>
 </head>
 <body>
 <div id="root"></div>
-<script type="module" src="/excalidraw/app.js"></script>
+<script type="module" src="/excalidraw/app.js?v=${appHash}"></script>
 </body>
 </html>
 `
+}
 
 /** Locate the standalone app bundle relative to this module (src or lib). */
 function appJsPath(): string {
@@ -55,6 +63,19 @@ function appJsPath(): string {
   const found = candidates.find(candidate => existsSync(candidate))
   // candidates always has an entry; the non-null assertion is safe.
   return found ?? candidates[0]!
+}
+
+/** Short content hash of the app bundle, used to bust stale caches. */
+let appHashCache: string | null = null
+function appHash(): string {
+  if (appHashCache !== null) return appHashCache
+  try {
+    const bytes = readFileSync(appJsPath())
+    appHashCache = createHash('sha256').update(bytes).digest('hex').slice(0, 12)
+  } catch {
+    appHashCache = 'unknown'
+  }
+  return appHashCache
 }
 
 /** Write a JSON response with the given status code. */
@@ -97,21 +118,23 @@ export async function handleExcalidrawRequest(
   const method = req.method ?? 'GET'
 
   try {
-    // Serve the iframe HTML shell.
+    // Serve the iframe HTML shell (bundled with a content-hash query so a
+    // redeployed app.js always busts stale browser caches).
     if (method === 'GET' && path === '/excalidraw/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      res.end(HTML_SHELL)
+      res.end(htmlShell(appHash()))
       return
     }
 
     // Serve the standalone app bundle. The file is large (~12MB); stream it.
+    // Cacheable forever because the shell references it by content hash.
     if (method === 'GET' && path === '/excalidraw/app.js') {
       const file = appJsPath()
       try {
         const bytes = await readFile(file)
         res.writeHead(200, {
           'content-type': 'text/javascript; charset=utf-8',
-          'cache-control': 'no-cache',
+          'cache-control': 'public, max-age=31536000, immutable',
         })
         res.end(bytes)
       } catch {
