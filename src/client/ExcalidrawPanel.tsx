@@ -6,7 +6,7 @@
 // into the plugin client bundle; react/react-dom come from the platform.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Excalidraw } from '@excalidraw/excalidraw'
+import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 // Excalidraw ships no auto-injected stylesheet; the tsdown plain-css plugin
 // inlines this exact specifier into a <style> tag in the client bundle.
@@ -243,12 +243,54 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
     )
   }, [cwd, handleApi, handleChange, theme])
 
+  // Export the canvas as a PNG download (viewBackgroundColor as the backdrop).
+  const [exporting, setExporting] = useState(false)
+  const exportPng = useCallback(async (): Promise<void> => {
+    const api = apiRef.current
+    if (api === null || exporting) return
+    setExporting(true)
+    setError(null)
+    try {
+      const elements = api.getSceneElements()
+      const appState = api.getAppState() as unknown as Record<string, unknown>
+      const blob = await exportToBlob({
+        elements,
+        appState: appState as never,
+        files: api.getFiles() as never,
+        mimeType: 'image/png',
+        background: (appState['viewBackgroundColor'] as string | undefined) ?? '#ffffff',
+      })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      const name = typeof api.getName() === 'string' && api.getName().length > 0 ? api.getName() : 'canvas'
+      anchor.href = url
+      anchor.download = `${name}.png`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 2000)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setExporting(false)
+    }
+  }, [exporting])
+
   return (
     <div className={css.view} data-ui-polish-excalidraw="">
       <div className={css.toolbar}>
         <span className={css.title}>{t('excalidraw.title')}</span>
         {cwd !== undefined && <span className={css.cwd}>{cwd}</span>}
-        {saving && <span className={css.saving}>{t('excalidraw.saving')}</span>}
+        <span className={css.toolbarActions}>
+          {saving && <span className={css.saving}>{t('excalidraw.saving')}</span>}
+          <button
+            type="button" className={css.export}
+            disabled={exporting || cwd === undefined}
+            onClick={() => { void exportPng() }}
+          >
+            {t('excalidraw.export')}
+          </button>
+        </span>
       </div>
       {error !== null && <div className={css.error}>{error}</div>}
       {cwd === undefined

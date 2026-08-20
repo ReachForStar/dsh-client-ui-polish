@@ -17,6 +17,7 @@ export const zh = {
   // Excalidraw canvas tab.
   'excalidraw.title': '画布',
   'excalidraw.saving': '保存中…',
+  'excalidraw.export': '导出 PNG',
   // Git panel.
   'git.tab': 'Git',
   'git.title': 'Git 面板',
@@ -77,6 +78,7 @@ export const en = {
   'stats.expand': 'Expand session stats',
   'excalidraw.title': 'Canvas',
   'excalidraw.saving': 'Saving…',
+  'excalidraw.export': 'Export PNG',
   'git.tab': 'Git',
   'git.title': 'Git panel',
   'git.open': 'Git',

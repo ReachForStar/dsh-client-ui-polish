@@ -38,6 +38,39 @@
   color: var(--dsw-alias-state-success-primary);
 }
 
+.toolbarActions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 10px;
+  align-items: baseline;
+  flex: none;
+}
+
+.export {
+  padding: 4px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-button-floating-fill);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 150ms ease-out, background-color 150ms ease-out, opacity 150ms ease-out;
+}
+
+.export:hover:not(:disabled) {
+  border-color: var(--dsw-alias-accent);
+}
+
+.export:focus-visible {
+  outline: 2px solid var(--dsw-alias-accent);
+  outline-offset: -1px;
+}
+
+.export:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .error {
   flex: none;
   padding: 6px 10px;
