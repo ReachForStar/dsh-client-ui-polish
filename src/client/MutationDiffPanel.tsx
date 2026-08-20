@@ -88,6 +88,8 @@ export function MutationDiffPanel({ useSession, useWorkspaces, t }: MutationDiff
   const [children, setChildren] = useState<Record<string, readonly DirEntry[]>>({})
   const [selected, setSelected] = useState<string | null>(null)
   const [content, setContent] = useState<string | null>(null)
+  /** Data URL for an image file preview (read-only; images are not editable). */
+  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -98,6 +100,7 @@ export function MutationDiffPanel({ useSession, useWorkspaces, t }: MutationDiff
     setChildren({})
     setSelected(null)
     setContent(null)
+    setImageDataUrl(null)
     if (cwd === undefined) return
     let cancelled = false
     gitFetch<{ items: DirEntry[] }>('/git/list', cwd, { method: 'POST', body: JSON.stringify({}) })
@@ -133,13 +136,18 @@ export function MutationDiffPanel({ useSession, useWorkspaces, t }: MutationDiff
     if (cwd === undefined) return
     setSelected(path)
     setContent(null)
+    setImageDataUrl(null)
     setError(null)
     try {
-      const result = await gitFetch<{ content: string }>('/git/read', cwd, {
+      const result = await gitFetch<{ content?: string; isImage?: boolean; dataUrl?: string }>('/git/read', cwd, {
         method: 'POST',
         body: JSON.stringify({ path }),
       })
-      setContent(result.content)
+      if (result.isImage === true && result.dataUrl !== undefined) {
+        setImageDataUrl(result.dataUrl)
+        return
+      }
+      setContent(result.content ?? '')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -246,30 +254,42 @@ export function MutationDiffPanel({ useSession, useWorkspaces, t }: MutationDiff
             <div className={css.column}>
               {selected === null
                 ? <div className={css.notice}>{t('diff.select')}</div>
-                : (
-                  <>
-                    <div className={css.fileHeader}>
-                      <span className={css.filePath}>{selected}</span>
-                      <button
-                        type="button" className={css.action}
-                        disabled={busy || content === null}
-                        onClick={() => { void saveFile() }}
-                      >
-                        {t('diff.save')}
-                      </button>
-                    </div>
-                    {content === null
-                      ? <div className={css.notice}>…</div>
-                      : (
-                        <textarea
-                          className={css.editor}
-                          value={content}
-                          spellCheck={false}
-                          onChange={event => { setContent(event.target.value) }}
-                        />
-                      )}
-                  </>
-                )}
+                : imageDataUrl !== null
+                  ? (
+                    <>
+                      <div className={css.fileHeader}>
+                        <span className={css.filePath}>{selected}</span>
+                        <span className={css.previewTag}>{t('diff.preview')}</span>
+                      </div>
+                      <div className={css.imageWrap}>
+                        <img className={css.image} src={imageDataUrl} alt={selected} />
+                      </div>
+                    </>
+                  )
+                  : (
+                    <>
+                      <div className={css.fileHeader}>
+                        <span className={css.filePath}>{selected}</span>
+                        <button
+                          type="button" className={css.action}
+                          disabled={busy || content === null}
+                          onClick={() => { void saveFile() }}
+                        >
+                          {t('diff.save')}
+                        </button>
+                      </div>
+                      {content === null
+                        ? <div className={css.notice}>…</div>
+                        : (
+                          <textarea
+                            className={css.editor}
+                            value={content}
+                            spellCheck={false}
+                            onChange={event => { setContent(event.target.value) }}
+                          />
+                        )}
+                    </>
+                  )}
             </div>
           </div>
         )}

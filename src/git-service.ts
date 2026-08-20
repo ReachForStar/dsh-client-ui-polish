@@ -111,6 +111,26 @@ function bodyPath(body: Record<string, unknown>, field: string): string {
   return value
 }
 
+/** Image MIME by file extension (preview-only kinds; never edited in place). */
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  avif: 'image/avif',
+}
+
+/** The MIME type when `path` names an image file, else undefined. */
+function imageMimeOf(path: string): string | undefined {
+  const dot = path.lastIndexOf('.')
+  if (dot < 0) return undefined
+  return IMAGE_MIME_BY_EXT[path.slice(dot + 1).toLowerCase()]
+}
+
 /** Validate a repository-relative file path and resolve it against the cwd. */
 function resolveRepoPath(cwd: string, filePath: string): string {
   // A repository-relative path must not escape the repo.
@@ -202,7 +222,16 @@ export async function handleGitRequest(
     if (method === 'POST' && path === '/git/read') {
       const body = await readJson(req)
       const cwd = resolveCwd(bodyPath(body, 'cwd'))
-      const abs = resolveRepoPath(cwd, bodyPath(body, 'path'))
+      const filePath = bodyPath(body, 'path')
+      const abs = resolveRepoPath(cwd, filePath)
+      const mime = imageMimeOf(filePath)
+      if (mime !== undefined) {
+        // Image preview: return the bytes as a data URL. Read-only — the
+        // panel shows the picture and offers no editor.
+        const bytes = await readFile(abs)
+        json(res, 200, { isImage: true, mime, dataUrl: `data:${mime};base64,${bytes.toString('base64')}` })
+        return
+      }
       const content = await readFile(abs, 'utf8')
       json(res, 200, { content })
       return

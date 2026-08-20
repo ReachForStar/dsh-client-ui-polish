@@ -56,6 +56,7 @@ export const zh = {
   'diff.save': '保存',
   'diff.close': '关闭',
   'diff.refresh': '刷新',
+  'diff.preview': '预览 · 图片不可编辑',
 } satisfies Record<string, string>
 
 /** The ui-polish namespace key union. */
@@ -111,4 +112,5 @@ export const en = {
   'diff.save': 'Save',
   'diff.close': 'Close',
   'diff.refresh': 'Refresh',
+  'diff.preview': 'Preview · images are read-only',
 } satisfies Record<PolishKey, string>

@@ -125,6 +125,35 @@ describe('git panel host service', () => {
     expect(body.content).toContain('"name"')
   })
 
+  it('reads an image file as a read-only data URL preview', async () => {
+    const { mkdtemp, rm, writeFile } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-git-image-'))
+    try {
+      // Minimal 1x1 PNG bytes.
+      const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64',
+      )
+      await writeFile(join(workspace, 'pic.png'), png)
+      const imageResolve = workspaceCwdResolver([workspace], 'D:/fallback')
+      const double = responseDouble()
+      await handleGitRequest(
+        imageResolve,
+        requestDouble('/git/read', 'POST', { cwd: workspace, path: 'pic.png' }) as never,
+        double.res as never,
+      )
+      expect(double.status).toBe(200)
+      const body = double.body as { isImage: boolean; mime: string; dataUrl: string }
+      expect(body.isImage).toBe(true)
+      expect(body.mime).toBe('image/png')
+      expect(body.dataUrl).toContain('data:image/png;base64,')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('rejects read paths that escape the repository', async () => {
     for (const bad of ['../outside', '/etc/passwd', 'sub\\..\\escape']) {
       const double = responseDouble()
