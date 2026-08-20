@@ -179,6 +179,188 @@ function elementFromShape(shape: DrawShape): Record<string, unknown> | null {
 }
 
 /**
+ * Render an Excalidraw scene as an SVG document. Pure node-side (no canvas):
+ * the model's `excalidraw_export` tool writes this vector file to the
+ * workspace. Supports the shapes the draw tool emits plus freedraw paths;
+ * hand-drawn (roughjs) texture is not reproduced — flat fills/strokes only.
+ * @param elements - the scene's element objects.
+ * @param background - backdrop color, or null for transparent.
+ * @returns the SVG document as a string.
+ */
+export function sceneToSvg(elements: readonly unknown[], background: string | null): string {
+  const visible = elements.filter((raw) => {
+    if (typeof raw !== 'object' || raw === null) return false
+    const element = raw as Record<string, unknown>
+    return element['isDeleted'] !== true
+  })
+  // Compute the bounding box over every element so the SVG viewBox frames it.
+  const padding = 24
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  const boxes: { x: number; y: number; w: number; h: number }[] = []
+  for (const raw of visible) {
+    const element = raw as Record<string, unknown>
+    const x = numOf(element['x'])
+    const y = numOf(element['y'])
+    const w = Math.max(0, numOf(element['width']))
+    const h = Math.max(0, numOf(element['height']))
+    const points = Array.isArray(element['points']) ? element['points'] as unknown[] : undefined
+    let bx = x
+    let by = y
+    let bw = w
+    let bh = h
+    if (points !== undefined && points.length > 0) {
+      // Points are element-relative; fold them into the box.
+      let px = 0
+      let py = 0
+      let pw = 0
+      let ph = 0
+      for (const point of points) {
+        if (!Array.isArray(point) || typeof point[0] !== 'number' || typeof point[1] !== 'number') continue
+        px = Math.min(px, point[0])
+        py = Math.min(py, point[1])
+        pw = Math.max(pw, point[0])
+        ph = Math.max(ph, point[1])
+      }
+      bx = x + px
+      by = y + py
+      bw = pw - px
+      bh = ph - py
+    }
+    boxes.push({ x: bx, y: by, w: bw, h: bh })
+    minX = Math.min(minX, bx)
+    minY = Math.min(minY, by)
+    maxX = Math.max(maxX, bx + bw)
+    maxY = Math.max(maxY, by + bh)
+  }
+  if (!Number.isFinite(minX)) {
+    minX = 0; minY = 0; maxX = 800; maxY = 600
+  }
+  const viewX = minX - padding
+  const viewY = minY - padding
+  const viewW = maxX - minX + padding * 2
+  const viewH = maxY - minY + padding * 2
+
+  const parts: string[] = []
+  if (background !== null) {
+    parts.push(`<rect x="${viewX}" y="${viewY}" width="${viewW}" height="${viewH}" fill="${xmlAttr(background)}"/>`)
+  }
+  visible.forEach((raw, index) => {
+    const element = raw as Record<string, unknown>
+    const type = String(element['type'] ?? '')
+    const x = numOf(element['x'])
+    const y = numOf(element['y'])
+    const w = Math.max(0, numOf(element['width']))
+    const h = Math.max(0, numOf(element['height']))
+    const stroke = strOf(element['strokeColor']) || '#1e1e1e'
+    const fill = type === 'text' ? strOf(element['strokeColor']) || '#1e1e1e' : strOf(element['backgroundColor'])
+    const strokeWidth = numOf(element['strokeWidth']) || 2
+    const opacity = Math.max(0.05, Math.min(1, numOf(element['opacity']) || 100) / 100)
+    const angle = numOf(element['angle']) || 0
+    const cx = x + w / 2
+    const cy = y + h / 2
+    const transform = angle === 0
+      ? ''
+      : ` transform="rotate(${angle * 180 / Math.PI} ${cx} ${cy})"`
+
+    const style = `fill="${fill === '' ? 'none' : xmlAttr(fill)}" stroke="${xmlAttr(stroke)}" stroke-width="${strokeWidth}" opacity="${opacity}"`
+    switch (type) {
+      case 'rectangle':
+        parts.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" ${style}${transform}/>`)
+        break
+      case 'ellipse':
+        parts.push(`<ellipse cx="${cx}" cy="${cy}" rx="${w / 2}" ry="${h / 2}" ${style}${transform}/>`)
+        break
+      case 'diamond':
+        parts.push(
+          `<polygon points="${x + w / 2},${y} ${x + w},${y + h / 2} ${x + w / 2},${y + h} ${x},${y + h / 2}" ${style}${transform}/>`,
+        )
+        break
+      case 'text': {
+        const fontSize = numOf(element['fontSize']) || 20
+        const text = String(element['text'] ?? '')
+        parts.push(
+          `<text x="${x}" y="${y + fontSize}" font-size="${fontSize}" fill="${xmlAttr(fill)}" font-family="sans-serif"${transform}>${xmlText(text)}</text>`,
+        )
+        break
+      }
+      case 'line':
+      case 'arrow': {
+        const points = Array.isArray(element['points']) ? element['points'] as unknown[] : []
+        if (points.length >= 2) {
+          const coords = points
+            .filter((point): point is unknown[] => Array.isArray(point) && typeof point[0] === 'number' && typeof point[1] === 'number')
+            .map(point => `${numOf(point[0]) + x},${numOf(point[1]) + y}`)
+          if (coords.length >= 2) {
+            const strokeOnly = `fill="none" stroke="${xmlAttr(stroke)}" stroke-width="${strokeWidth}" opacity="${opacity}"`
+            parts.push(`<polyline points="${coords.join(' ')}" ${strokeOnly}${transform}/>`)
+            if (type === 'arrow') {
+              const last = coords[coords.length - 1]!.split(',')
+              const prev = coords[coords.length - 2]!.split(',')
+              const ax = Number(last[0]); const ay = Number(last[1])
+              const dx = ax - Number(prev[0]); const dy = ay - Number(prev[1])
+              const len = Math.hypot(dx, dy) || 1
+              const ux = dx / len; const uy = dy / len
+              const size = 10
+              const head = [
+                [ax - ux * size + -uy * size * 0.5, ay - uy * size + ux * size * 0.5],
+                [ax, ay],
+                [ax - ux * size + uy * size * 0.5, ay - uy * size + -ux * size * 0.5],
+              ]
+              parts.push(
+                `<polygon points="${head.map(p => `${p[0]},${p[1]}`).join(' ')}" fill="${xmlAttr(stroke)}" opacity="${opacity}"${transform}/>`,
+              )
+            }
+          }
+        }
+        break
+      }
+      case 'freedraw': {
+        const points = Array.isArray(element['points']) ? element['points'] as unknown[] : []
+        const d = points
+          .filter((point): point is unknown[] => Array.isArray(point) && typeof point[0] === 'number' && typeof point[1] === 'number')
+          .map((point, index) => `${index === 0 ? 'M' : 'L'}${numOf(point[0]) + x},${numOf(point[1]) + y}`)
+          .join(' ')
+        if (d.length > 0) {
+          parts.push(`<path d="${d}" fill="none" stroke="${xmlAttr(stroke)}" stroke-width="${strokeWidth}" opacity="${opacity}"${transform}/>`)
+        }
+        break
+      }
+      default:
+        break
+    }
+    void index
+  })
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewX} ${viewY} ${viewW} ${viewH}" width="${viewW}" height="${viewH}">\n`
+    + parts.join('\n')
+    + '\n</svg>\n'
+}
+
+/** Read a finite number field, defaulting to 0. */
+function numOf(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+/** Read a string field, defaulting to ''. */
+function strOf(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+/** Escape an attribute value. */
+function xmlAttr(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+}
+
+/** Escape text content. */
+function xmlText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/**
  * Register the two Excalidraw scene tools when the tool registry is composed.
  * @param ctx - Host context that may acquire the tools registry.
  */
@@ -491,7 +673,87 @@ export function installExcalidrawTools(ctx: Context): void {
           rawInput: `${(args as { elements?: unknown[] }).elements?.length ?? 0} shapes`,
         }),
       }))
-      return () => { disposeRead(); disposeWrite(); disposeDraw() }
+      const disposeExport = toolsCtx.tools.register(defineTool({
+        name: 'excalidraw_export',
+        description:
+          'Export the current workspace\'s Excalidraw canvas to an SVG image file '
+          + 'in the workspace (pure node-side rendering — no browser needed). Reads '
+          + 'the same scene the canvas tab shows and writes a vector SVG at '
+          + '`<workspace>/<path>` (default `.dsh/excalidraw/export.svg`). Use it to '
+          + 'persist a diagram the model drew so it can be viewed, committed, or '
+          + 'converted elsewhere. The SVG uses flat fills/strokes (no hand-drawn '
+          + 'texture); text keeps its content and font size.',
+        parameters: {
+          path: {
+            type: 'string',
+            description: 'Workspace-relative output path (e.g. "docs/flow.svg"); default ".dsh/excalidraw/export.svg".',
+          },
+          transparent: {
+            type: 'boolean',
+            description: 'When true, the SVG has a transparent background; default uses the canvas background color.',
+          },
+        },
+        output: {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              ok: { type: 'boolean', required: true },
+              path: { type: 'string', required: true, description: 'Absolute path of the written SVG.' },
+              elementCount: { type: 'integer', required: true, description: 'Elements included in the export.' },
+            },
+          },
+          render: (_args, value) => {
+            return [{ type: 'text', text: `Exported ${value['elementCount']} elements to ${value['path']}.` }]
+          },
+        },
+        execute: async (args, exec) => {
+          const location = sceneLocation(ctx, exec)
+          if (location === undefined) {
+            throw new Error('excalidraw_export requires an owning agent session in a workspace')
+          }
+          let text: string
+          try {
+            text = await readFile(location.path, 'utf8')
+          } catch {
+            throw new Error('excalidraw_export: no scene to export — draw something first')
+          }
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(text)
+          } catch {
+            throw new Error('excalidraw_export: scene file is corrupted (not valid JSON)')
+          }
+          const record = (typeof parsed === 'object' && parsed !== null) ? parsed as Record<string, unknown> : {}
+          const elements = Array.isArray(record['elements']) ? record['elements'] : []
+          const appState = (typeof record['appState'] === 'object' && record['appState'] !== null)
+            ? record['appState'] as Record<string, unknown>
+            : {}
+          const rawPath = (args as { path?: string }).path
+          const transparent = (args as { transparent?: boolean }).transparent === true
+          let relPath = typeof rawPath === 'string' && rawPath.trim().length > 0 ? rawPath.trim() : '.dsh/excalidraw/export.svg'
+          if (relPath.includes('..') || relPath.startsWith('/') || relPath.includes('\\')) {
+            throw new Error('excalidraw_export: `path` must stay inside the workspace')
+          }
+          const background = transparent
+            ? null
+            : typeof appState['viewBackgroundColor'] === 'string' && appState['viewBackgroundColor'].length > 0
+              ? appState['viewBackgroundColor']
+              : null
+          const svg = sceneToSvg(elements, background)
+          const abs = join(location.workspace, relPath)
+          await mkdir(dirname(abs), { recursive: true })
+          await writeFile(abs, svg, 'utf8')
+          return { ok: true, path: abs, elementCount: elements.length }
+        },
+        presentCall: args => ({
+          card: 'generic',
+          title: 'Export Excalidraw canvas',
+          kind: 'other',
+          rawInput: `path: ${(args as { path?: string }).path ?? '.dsh/excalidraw/export.svg'}`,
+        }),
+      }))
+      return () => { disposeRead(); disposeWrite(); disposeDraw(); disposeExport() }
     }, 'ui-polish: excalidraw scene tools')
   })
 }

@@ -49,9 +49,9 @@ function execFor(cwd: string) {
 }
 
 describe('excalidraw model tools', () => {
-  it('registers all three tools and unwinds on dispose', () => {
+  it('registers all four tools and unwinds on dispose', () => {
     const b = bench()
-    expect(b.registered.map(entry => entry.name).sort()).toEqual(['excalidraw_draw', 'excalidraw_read', 'excalidraw_write'])
+    expect(b.registered.map(entry => entry.name).sort()).toEqual(['excalidraw_draw', 'excalidraw_export', 'excalidraw_read', 'excalidraw_write'])
     b.disposers.forEach(dispose => dispose())
     expect(b.registered).toHaveLength(0)
   })
@@ -217,6 +217,61 @@ describe('excalidraw model tools', () => {
         elements: [{ type: 'rectangle', x: 0, y: 0, width: 1, height: 1 }],
         action: 'clear',
       }, execFor(workspace))).rejects.toThrow('append')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('export writes an SVG of the scene to the workspace', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-excalidraw-tool-'))
+    try {
+      const b = bench()
+      const drawTool = b.registered.find(entry => entry.name === 'excalidraw_draw')!
+      await drawTool.definition.execute({
+        elements: [
+          { type: 'rectangle', x: 10, y: 20, width: 100, height: 50 },
+          { type: 'text', x: 10, y: 80, width: 200, height: 30, text: 'hello' },
+          { type: 'arrow', x: 0, y: 0, width: 50, height: 50, points: [[0, 0], [50, 50]] },
+        ],
+      }, execFor(workspace))
+      const exportTool = b.registered.find(entry => entry.name === 'excalidraw_export')!
+      const result = await exportTool.definition.execute({}, execFor(workspace))
+      expect(result).toMatchObject({ ok: true, elementCount: 3 })
+      const abs = (result as { path: string }).path
+      expect(abs.startsWith(workspace)).toBe(true)
+      const svg = await readFile(abs, 'utf8')
+      expect(svg).toContain('<svg')
+      expect(svg).toContain('<rect')
+      expect(svg).toContain('<text')
+      expect(svg).toContain('hello')
+      expect(svg).toContain('<polyline')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('export honors a custom path and rejects escaping paths', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-excalidraw-tool-'))
+    try {
+      const b = bench()
+      const drawTool = b.registered.find(entry => entry.name === 'excalidraw_draw')!
+      await drawTool.definition.execute({ elements: [{ type: 'rectangle', x: 0, y: 0, width: 10, height: 10 }] }, execFor(workspace))
+      const exportTool = b.registered.find(entry => entry.name === 'excalidraw_export')!
+      const result = await exportTool.definition.execute({ path: 'docs/diagram.svg' }, execFor(workspace))
+      expect((result as { path: string }).path).toMatch(/[\\/]docs[\\/]diagram\.svg$/)
+      expect(await readFile((result as { path: string }).path, 'utf8')).toContain('<svg')
+      await expect(exportTool.definition.execute({ path: '../evil.svg' }, execFor(workspace))).rejects.toThrow('inside the workspace')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('export fails when no scene exists', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-excalidraw-tool-'))
+    try {
+      const b = bench()
+      const exportTool = b.registered.find(entry => entry.name === 'excalidraw_export')!
+      await expect(exportTool.definition.execute({}, execFor(workspace))).rejects.toThrow('no scene to export')
     } finally {
       await rm(workspace, { recursive: true, force: true })
     }
