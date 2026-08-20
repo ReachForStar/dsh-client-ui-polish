@@ -85,6 +85,24 @@ function sanitizeAppState(appState: object): Record<string, unknown> {
 }
 
 /**
+ * A stable fingerprint of a scene's element set, keyed on the identity fields
+ * the model's draw tool produces (id/type/text) plus the element count. Field
+ * order and runtime fields (seed/versionNonce/index) do not affect it, so the
+ * same content yields the same fingerprint regardless of serialization order —
+ * this is what lets the poll loop tell "the model drew something new" apart
+ * from "the canvas saved its own edits".
+ */
+function sceneFingerprint(scene: unknown): string | null {
+  const record = (typeof scene === 'object' && scene !== null) ? scene as Record<string, unknown> : null
+  if (record === null || !Array.isArray(record['elements'])) return null
+  const parts = (record['elements'] as unknown[]).map((raw) => {
+    const element = (typeof raw === 'object' && raw !== null) ? raw as Record<string, unknown> : {}
+    return `${String(element['id'] ?? '')}:${String(element['type'] ?? '')}:${String(element['text'] ?? '')}`
+  })
+  return `${parts.join('|')}#${parts.length}`
+}
+
+/**
  * Render the Excalidraw canvas as a conversation view tab, embedded directly.
  * @param props - composed slot props.
  * @returns the panel element tree.
@@ -100,6 +118,11 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
   const saveTimer = useRef<number | null>(null)
   const [theme, setTheme] = useState<'light' | 'dark'>(() =>
     document.body.hasAttribute(DARK_ATTRIBUTE) ? 'dark' : 'light')
+  // Fingerprint of the scene currently applied to the canvas. Updated on every
+  // apply (initial load, model-driven reload) and after every self-save, so the
+  // poll loop can detect a model-written scene change without reloading the
+  // canvas's own edits.
+  const lastAppliedFingerprint = useRef<string | null>(null)
 
   // Follow the DSH theme natively (same document, no postMessage).
   useEffect(() => {
@@ -128,6 +151,8 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
           elements: (scene.elements ?? []) as never,
           appState: sanitizeAppState(scene.appState ?? {}) as never,
         })
+        const fingerprint = sceneFingerprint(scene)
+        if (fingerprint !== null) lastAppliedFingerprint.current = fingerprint
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [cwd])
@@ -135,6 +160,7 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
   // Reset the load guard when the workspace changes.
   useEffect(() => {
     loadedOnce.current = false
+    lastAppliedFingerprint.current = null
   }, [cwd])
 
   const handleApi = useCallback((api: ExcalidrawImperativeAPI): void => {
@@ -160,10 +186,50 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
         .then(response => response.json())
         .then((body: Record<string, unknown>) => {
           if (body['ok'] !== true) throw new Error(typeof body.error === 'string' ? body.error : 'save failed')
+          // The file now matches the canvas; remember it so the poll loop does
+          // not treat this self-save as a model-driven change.
+          const fingerprint = sceneFingerprint(scene)
+          if (fingerprint !== null) lastAppliedFingerprint.current = fingerprint
         })
         .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
         .finally(() => { setSaving(false) })
     }, 800)
+  }, [cwd])
+
+  // Poll the scene file: when the model draws via excalidraw_draw (or rewrites
+  // the scene), the fingerprint changes and the canvas reloads it live, so
+  // model-created content appears without leaving and re-entering the tab.
+  useEffect(() => {
+    if (cwd === undefined) return
+    let cancelled = false
+    const poll = async (): Promise<void> => {
+      // The API may not be ready yet on the first tick; skip until it is.
+      if (cancelled || apiRef.current === null) return
+      try {
+        const response = await fetch('/scene/current', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ cwd }),
+        })
+        if (response.status === 404) return
+        const body = await response.json().catch(() => ({})) as Record<string, unknown>
+        if (!response.ok) return
+        const fingerprint = sceneFingerprint(body)
+        if (fingerprint === null || fingerprint === lastAppliedFingerprint.current) return
+        // A different scene landed on disk (model drew) — apply it.
+        const scene = body as unknown as ScenePayload
+        apiRef.current.updateScene({
+          elements: (scene.elements ?? []) as never,
+          appState: sanitizeAppState(scene.appState ?? {}) as never,
+        })
+        lastAppliedFingerprint.current = fingerprint
+      } catch {
+        // Transient fetch failure — the next poll retries.
+      }
+    }
+    void poll()
+    const timer = window.setInterval(() => { void poll() }, 2000)
+    return () => { cancelled = true; window.clearInterval(timer) }
   }, [cwd])
 
   const frame = useMemo(() => {
