@@ -218,6 +218,7 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
         if (fingerprint === null || fingerprint === lastAppliedFingerprint.current) return
         // A different scene landed on disk (model drew) — apply it.
         const scene = body as unknown as ScenePayload
+        console.log('[dsh-poll] applying scene', fingerprint, 'was', lastAppliedFingerprint.current, 'elements', (scene.elements ?? []).length)
         apiRef.current.updateScene({
           elements: (scene.elements ?? []) as never,
           appState: sanitizeAppState(scene.appState ?? {}) as never,

@@ -153,9 +153,14 @@ describe('excalidraw model tools', () => {
       const onDisk = JSON.parse(await readFile(join(workspace, SCENE_RELATIVE), 'utf8'))
       expect(onDisk.elements).toHaveLength(3)
       expect(onDisk.elements.map((e: { type: string }) => e.type)).toEqual(['rectangle', 'text', 'arrow'])
-      // Minimal elements: no seed/version/index leaked from the tool side.
-      expect(onDisk.elements[0]).not.toHaveProperty('seed')
-      expect(onDisk.elements[0]).not.toHaveProperty('version')
+      // Complete rendering fields: seed (roughjs needs it to draw the shape),
+      // index (reconciliation), opacity 0-100 (1 would be near-invisible) and
+      // roundness are all emitted by the tool.
+      expect(onDisk.elements[0]).toHaveProperty('seed')
+      expect(onDisk.elements[0]).toHaveProperty('version')
+      expect(onDisk.elements[0]).toHaveProperty('roughness')
+      expect(onDisk.elements[0]).toHaveProperty('index')
+      expect(onDisk.elements[0]).toMatchObject({ opacity: 100, roundness: { type: 3 } })
 
       const readTool = b.registered.find(entry => entry.name === 'excalidraw_read')!
       const value = await readTool.definition.execute({}, execFor(workspace))

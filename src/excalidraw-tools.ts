@@ -134,48 +134,99 @@ function shapeNumber(value: unknown, name: string, fallback: number): number {
 }
 
 /**
- * Build a minimal Excalidraw element from one high-level shape. Only the
- * semantic fields are emitted; Excalidraw's `updateScene` completes the
- * internal ones (seed/version/index) on load.
+ * Build a complete Excalidraw element from one high-level shape. Every field
+ * roughjs needs to RENDER the shape is emitted: without `seed` (and the other
+ * base fields below) Excalidraw's updateScene only fills index/versionNonce,
+ * and roughjs throws during path generation — the canvas stays blank. The
+ * model supplies only semantic fields; this function fills the rendering
+ * surface.
  * @param shape - the model-supplied shape description.
- * @returns a minimal element object, or null when the type is unsupported.
+ * @returns a complete element object, or null when the type is unsupported.
  */
 function elementFromShape(shape: DrawShape): Record<string, unknown> | null {
   const type = shape.type
   if (!DRAWABLE_TYPES.has(type)) return null
+  const strokeColor = shape.strokeColor ?? '#1e1e1e'
+  const backgroundColor = shape.backgroundColor ?? 'transparent'
+  const strokeWidth = shapeNumber(shape.strokeWidth, 'strokeWidth', 2)
+  // Excalidraw opacity is an integer 0-100 (not a 0-1 fraction); 1 would make
+  // the shape nearly invisible.
+  const opacity = Math.round(Math.max(0, Math.min(100, shapeNumber(shape.opacity, 'opacity', 100))))
+  const fillStyle = shape.fillStyle ?? 'hachure'
   const base: Record<string, unknown> = {
     id: elementId(),
     type,
     x: shapeNumber(shape.x, 'x', 0),
     y: shapeNumber(shape.y, 'y', 0),
-    width: shapeNumber(shape.width, 'width', 100),
-    height: shapeNumber(shape.height, 'height', 100),
+    width: Math.max(0, shapeNumber(shape.width, 'width', 100)),
+    height: Math.max(0, shapeNumber(shape.height, 'height', 100)),
+    angle: 0,
+    strokeColor,
+    backgroundColor,
+    fillStyle,
+    strokeWidth,
+    strokeStyle: 'solid',
+    roughness: 1,
+    opacity,
+    seed: randomInt(),
+    version: 1,
+    versionNonce: randomInt(),
+    index: fractionalIndex(),
+    isDeleted: false,
+    groupIds: [],
+    frameId: null,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    roundness: { type: 3 },
   }
-  if (shape.strokeColor !== undefined) base['strokeColor'] = shape.strokeColor
-  if (shape.backgroundColor !== undefined) base['backgroundColor'] = shape.backgroundColor
-  if (shape.fillStyle !== undefined) base['fillStyle'] = shape.fillStyle
-  if (shape.strokeWidth !== undefined) base['strokeWidth'] = shapeNumber(shape.strokeWidth, 'strokeWidth', 1)
-  if (shape.opacity !== undefined) base['opacity'] = shapeNumber(shape.opacity, 'opacity', 100)
   if (type === 'text') {
     base['text'] = typeof shape.text === 'string' ? shape.text : ''
-    // Auto-resizing text uses width/height as a sizing hint; Excalidraw
-    // measures the real bounds from the font.
     base['fontSize'] = 20
+    base['fontFamily'] = 1
+    base['textAlign'] = 'left'
+    base['verticalAlign'] = 'top'
+    base['containerId'] = null
+    base['originalText'] = typeof shape.text === 'string' ? shape.text : ''
+    base['autoResize'] = true
+    base['lineHeight'] = 1.25
+    base['roundness'] = null
   }
   if (type === 'arrow' || type === 'line') {
-    // points overrides the bounding box when supplied; otherwise a straight
-    // segment across the box's diagonal is the sensible default.
     const points = Array.isArray(shape.points)
       ? shape.points
       : [[0, 0], [shapeNumber(shape.width, 'width', 100), shapeNumber(shape.height, 'height', 100)]]
     base['points'] = points
-  }
-  if (type === 'text') {
-    // A bare text element is verticalAlign-ed to its box; Excalidraw defaults
-    // are fine when the field is omitted.
-    base['verticalAlign'] = 'top'
+    base['lastCommittedPoint'] = null
+    base['startBinding'] = null
+    base['endBinding'] = null
+    base['startArrowhead'] = type === 'arrow' ? 'arrow' : null
+    base['endArrowhead'] = type === 'arrow' ? 'arrow' : null
+    if (type === 'arrow') base['elbowed'] = false
   }
   return base
+}
+
+/** Random non-negative integer seed (roughjs shape seed). */
+function randomInt(): number {
+  return randomBytes(4).readUInt32BE(0) % 0x7fffffff
+}
+
+/**
+ * A fractional index for scene ordering (the same scheme Excalidraw uses via
+ * fractional-indexing: strings compare alphabetically, `a0` < `a1` < `b0`…).
+ * Elements without an `index` can be dropped as invalid by Excalidraw's scene
+ * reconciliation on load, which made model-drawn shapes disappear from the
+ * canvas; every drawn element carries one.
+ */
+function fractionalIndex(): string {
+  // Monotonic-ish: combine a base-36 timestamp fraction with randomness so
+  // concurrent draws interleave sanely; the exact value only needs to order
+  // elements within the scene.
+  const base = Math.floor(Date.now() / 1000).toString(36)
+  const tail = randomBytes(3).readUIntBE(0, 3).toString(36)
+  return `a${base}${tail}`
 }
 
 /**
