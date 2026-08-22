@@ -11,6 +11,17 @@ overrides:
   '@deepseek-ai/dsh-output-retention': 0.1.1-rc.2
   '@deepseek-ai/dsh-client-ui-theme': 0.1.1-rc.2
 
+# pnpm 10+ ignores dependency build scripts unless allowlisted; these are on
+# the suite's dependency chain and need their postinstall steps (native
+# bindings / binary download / generated code) in a fresh CI install.
+onlyBuiltDependencies:
+  - '@deepseek-ai/dsh-subprocess-local'
+  - '@google/genai'
+  - esbuild
+  - koffi
+  - node-pty
+  - protobufjs
+
 # Recently published @deepseek-ai packages (the 0.1.1-rc.2 release) are
 # excluded from pnpm's minimum-release-age gate so the workspace installs the
 # official release instead of being blocked by its fresh publish date.
