@@ -42,9 +42,8 @@ dsh plugin --profile web add ./packages/llm-amax
 # 3. Pi 编码 agent 委派后端（宿主提供方）
 dsh plugin --profile web add ./packages/subagent-pi
 
-# 4. 白板模型工具与 Pi 委派工具按 agent 授予：
-#    把 presets/standard-polished/ 复制到 $DSH_HOME/.agent-presets/ 并选为
-#    agent preset（或把 tool-excalidraw / tool-subagent-pi 两行加入现有 preset）
+# 4. 白板模型工具与 Pi 委派工具按 agent 授予——通过 agent preset，
+#    详见下方「步骤 4 详解」。
 ```
 
 `dsh plugin` 在 profile 目录里转发给 pnpm，因此相对路径会锚定到你执行命令的目录，直接可用；绝对路径同样可以。pnpm 以符号链接方式挂载包目录（不复制），因此修改插件源码后需在 checkout 里重新构建（`pnpm run build`）——`prepare` 脚本只在 `pnpm install` 时构建。
@@ -54,10 +53,94 @@ dsh plugin --profile web add ./packages/subagent-pi
 - **AMAX**：设置 `AMAX_API_KEY`（或存入凭据引用），打开 Models 页选择 *AMAX Token Router*，用 *fetch available models* 从 `GET /v1/models` 拉取账户模型列表。
 - **Pi**：确保 `pi` 可执行文件在 `PATH`；preset 挂载 `tool-subagent-pi` 后，agent 即可看到 `subagent_pi` 工具。
 
+### 步骤 4 详解：安装 preset
+
+agent preset 决定会话挂载哪些工具。harness 自带的 `standard` preset 不含这两个工具，且同名用户 preset 无法覆盖 shipped preset（shipped root 优先）——因此本仓库以新 id（`standard-polished`）提供 preset。它包含完整官方 `standard` 组合外加 `tool-excalidraw` 行与 `tool-subagent-pi` 行。
+
+**4a. 复制 preset 目录**（目录名即 preset id）：
+
+```sh
+# $DSH_HOME 默认 ~/.dsh（Windows：%USERPROFILE%\.dsh）；可用 DSH_HOME 环境变量覆盖
+mkdir -p "$DSH_HOME/.agent-presets"
+cp -R presets/standard-polished "$DSH_HOME/.agent-presets/"
+```
+
+PowerShell：
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.dsh\.agent-presets"
+Copy-Item -Recurse .\presets\standard-polished "$env:USERPROFILE\.dsh\.agent-presets\"
+```
+
+结果结构：
+
+```
+$DSH_HOME/.agent-presets/standard-polished/
+  agent.cordis.yml   # 官方 standard + tool-excalidraw + tool-subagent-pi
+  preset.yml         # 可选：选择器显示的元数据
+```
+
+**4b. 设为默认**（二选一）：
+
+- **web UI 方式**：重启 `dsh --profile web`，打开**通用设置**，在 Agent preset 下拉中选择 *Standard + Polish*。选择会写入设置文档。
+- **手写方式**：写入 `$DSH_HOME/settings.yaml`（热加载，无需重启）：
+
+```yaml
+agent-presets:
+  default: standard-polished
+```
+
+**4c. 验证**：打开一个**新**会话（默认值只作用于未指名 preset 的会话）。工具列表应包含 `excalidraw_read`、`excalidraw_write`、`excalidraw_draw`、`excalidraw_export` 与 `subagent_pi`。让模型画一个形状，可实时看到白板标签页出现——两侧共用 `$workspace/.dsh/excalidraw/scene.json`。
+
 注意事项：
 
 - **不要**把本套件装进 ReachForStar fork：它已在树内挂载这些行，插入的行会冲突。
 - harness 自带的 `standard` preset 无法被同名用户 preset 覆盖（shipped root 优先），因此本仓库以新 id（`standard-polished`）提供 preset。
+
+## 环境要求
+
+- 官方 `deepseek-ai/deepseek-harness` **0.1.1-rc.2**（`dsh-v0.1.1-rc.2`）——补丁与所依赖已发布包的目标基线。
+- Node `^22.19 || >=24` 与 pnpm（构建 checkout 需要；profile 安装本身由 `dsh plugin` 驱动，其内部使用 pnpm）。
+- `PATH` 上有 `git`（ui-polish 的 node 半侧为文件/Git 面板调用 git）；白板场景工具需要会话有工作区支撑。
+- 仅在使用 Pi 委派工具时需要 `PATH` 上的 `pi`；仅在使用 AMAX 路由时需要 `AMAX_API_KEY`。
+
+## 卸载
+
+每个已装部分可独立撤销：
+
+```sh
+# 移除三个 profile bundle（其补丁插入的行会从组合中消失；之后重启宿主）
+dsh plugin --profile web remove @reachforstar/dsh-client-ui-polish
+dsh plugin --profile web remove @reachforstar/dsh-llm-amax
+dsh plugin --profile web remove @reachforstar/dsh-subagent-pi
+
+# 删除 preset 并恢复 $DSH_HOME/settings.yaml 中的原默认值
+Remove-Item -Recurse "$env:DSH_HOME\.agent-presets\standard-polished"     # POSIX 用 rm -rf
+# agent-presets:
+#   default: standard        # ← 恢复
+```
+
+插件设置命名空间（`ui-polish`、`llm-amax`）以及你存储的 AMAX/Pi 凭据仍保留在用户设置文档中——需要的话手工删除。由于 checkout 是以符号链接挂进 profile 的，删除克隆会导致插件加载失败；请保留克隆或重新指向 profile。
+
+## 常见问题（FAQ）
+
+**我的 `$DSH_HOME/.agent-presets` 不存在——出问题了吗？**
+没有。该目录只在首次自建（或复制）用户 preset 时才创建。harness 仅在它存在时扫描；官方 shipped preset 位于应用安装目录，不在 `$DSH_HOME` 下。步骤 4a 会创建它。
+
+**改了插件源码但 web UI 仍是旧行为？**
+profile 以符号链接方式挂载包目录而非复制。请在 checkout 里重新构建（`pnpm run build`）——`prepare` 脚本只在 `pnpm install` 时运行——然后重启宿主。客户端 bundle（`lib/client.js`）由 modules node 半侧从符号链接的包目录提供，因此浏览器半侧只需重建加刷新页面即可生效。
+
+**为什么走 git/本地安装而非 npm？**
+这些是个人贡献，不是 deepseek-ai 的发布；不发布到 npm，绝不使用官方 `@deepseek-ai` scope。pnpm 无法安装 git 仓库内的子目录，因此本地 checkout 就是安装载体（见「安装」）。
+
+**为什么 AMAX 路由没有模型？**
+网关不携带静态模型列表——模型取决于账户的 token 计划。请在 Models 页使用 *fetch available models*（保存路由前它就会读取环境变量 `AMAX_API_KEY`），或在 `llm-amax:` 段手工填写模型 id。
+
+**为什么工具列表里没有 `subagent_pi`？**
+提供方 bundle 只注册宿主侧的提供方。工具按 agent 由 preset 授予：请同时安装 bundle 并挂载 `tool-subagent-pi`（见步骤 4），然后打开**新**会话。
+
+**需要官方 fork 做什么吗？**
+不需要。fork 已内建这些功能，且**不可**安装本套件；请装在官方发布版或其他普通 harness 上。
 
 ## 构建与测试
 
@@ -65,9 +148,10 @@ dsh plugin --profile web add ./packages/subagent-pi
 pnpm install
 pnpm run build     # 逐包 tsc + tsdown → lib/index.js（ui-polish 另有 lib/client.js）
 pnpm test          # 逐包 vitest
+pnpm run typecheck
 ```
 
-测试针对已发布的 `0.1.1-rc.2` harness 包运行（外加工作区本地的 `dsh-tool-excalidraw`，以及 Pi RPC 线缆使用的 `@earendil-works/pi-coding-agent` fixture）。`pnpm run typecheck` 门禁各包源码。
+测试针对已发布的 `0.1.1-rc.2` harness 包运行（外加工作区本地的 `dsh-tool-excalidraw`，以及 Pi RPC 线缆使用的 `@earendil-works/pi-coding-agent` fixture）。官方 `0.1.1-rc.2` npm 发布中部分传递依赖范围排除了自身 pre-release 构建（如 `dsh-sandbox >=0.1.1`）；`pnpm-workspace.yaml` 用 `overrides` 钉住这些包。`packages/ui-polish/tests/` 中的六个浏览器运行时套件 import 已发布的客户端 bundle（`window.__ModuleLoader__` closure 形态），只能在 DeepSeek Harness workspace checkout 中运行；它们保留在仓库内，standalone 的 `pnpm test` 会排除（见 `packages/ui-polish/vitest.config.ts`）。
 
 ## 许可
 

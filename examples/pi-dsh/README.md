@@ -25,4 +25,4 @@ The helper prints the child agent's final answer on stdout and shuts the runtime
 
 ## Keyless verification
 
-`tests/delegation.e2e.ts` runs the delegate helper against a scripted child runtime (`child.cordis.yml`, whose model echoes its process cwd) and asserts the exact answer, so the exact flow the skill documents is proven end to end without an API key. The dsh → Pi direction is verified by the provider's own keyless real-product suite (and, with a key, its credentialed e2e).
+The dsh → Pi direction is verified by the provider's own keyless real-product suite (and, with a key, its credentialed e2e). The Pi → dsh direction's scripted e2e lives in the harness repository (its child fixture is `examples/jsonrpc-agent`), so it is not duplicated here; run it from a DeepSeek Harness workspace checkout.

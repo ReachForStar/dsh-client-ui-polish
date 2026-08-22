@@ -1,0 +1,3 @@
+name: Standard + Polish
+description: 官方 standard preset 之上叠加 Excalidraw 白板工具（excalidraw_*）与 Pi 委派工具（subagent_pi），需先安装本套件对应 bundle。
+order: 100

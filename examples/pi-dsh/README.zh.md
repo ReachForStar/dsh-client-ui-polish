@@ -25,4 +25,4 @@ node dsh-delegate.mjs <path/to/cordis.yml> "<self-contained task>"
 
 ## Keyless 验证
 
-`tests/delegation.e2e.ts` 让委托辅助脚本对着脚本化子运行时（`child.cordis.yml`，其模型回显进程 cwd）运行并断言精确答案，从而端到端证明 Skill 文档描述的流程无需 API key 即可成立。dsh → Pi 方向由提供方自己的 keyless 真产品套件验证（带 key 时另有凭据 e2e）。
+dsh → Pi 方向由提供方自己的 keyless 真产品套件验证（带 key 时另有凭据 e2e）。Pi → dsh 方向的脚本化 e2e 位于 harness 仓库中（其子 fixture 为 `examples/jsonrpc-agent`），此处不重复包含；请在 DeepSeek Harness workspace checkout 中运行。

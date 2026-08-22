@@ -10,6 +10,8 @@ dsh plugin --profile web add ./packages/ui-polish
 
 bundle 补丁把 `ui-polish` 行插入 web profile：node 半侧注册 `/git`、`/bg`、`/scene` 路由与 `ui-polish` 设置命名空间，浏览器半侧由 client-modules node 半侧依据清单中的 `dsh.client` 元数据发现。无需改动 harness 源码。
 
+**本包必须与 `@reachforstar/dsh-tool-excalidraw` 一起安装**：node 半侧在运行时 import 它的 `SCENE_RELATIVE`（`/scene` 路由与白板标签页共用工具包的场景文件约定），单独挂载 `ui-polish` 会导致 `excalidraw-service` 加载失败。请同时安装两个 bundle，再挂载白板 preset（见仓库根 README 安装步骤 4）。
+
 增强项（除注明外均为客户端）：
 
 - **整个应用背景图片。** 插件拥有自己的 `ui-polish` 设置命名空间，并把图片绘制到 body（`cover`／固定／居中），在文档上标记 `data-ds-bg-image`。它注入的全局样式表在该属性生效时把基础 token（`--dsw-alias-bg-base`、`--dsw-specific-sidebar-fill`）覆盖为透明，因此结构性表面——应用框架、对话区、详情列与侧边栏——全部让位于图片；需要对比度的内容元素（卡片、代码块、按钮）保留自身填充。「通用」设置区的那一行负责上传（含大小与类型校验）、预览与移除图片。图片以**磁盘文件**持久化（经 `/bg/current` 提供）——设置文档只存短 URL，绝不存数百万字节的 base64——因此重启后仍保留，且不会撑大设置文件。

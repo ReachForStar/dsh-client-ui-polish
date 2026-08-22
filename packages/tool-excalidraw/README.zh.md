@@ -10,7 +10,20 @@
   name: '@reachforstar/dsh-tool-excalidraw'
 ```
 
-在 agent 预设中挂载该行（本仓库的 `presets/standard-polished` preset 携带它；Web 面上仅 bundle 行不会授予任何工具，因为工具按 agent 组合）。工具从调用 agent 的会话推导目标工作区：会话归属已知工作区时使用该工作区路径，否则使用会话 cwd；两者皆无的调用被拒绝。
+## 安装
+
+Web 面上两步缺一不可：
+
+```sh
+# 1. 安装 bundle（在宿主机注册工具插件）
+dsh plugin --profile web add ./packages/tool-excalidraw
+
+# 2. 通过 preset 把工具授予 agent：把本仓库的 presets/standard-polished/
+#    复制到 $DSH_HOME/.agent-presets/ 并选为 agent preset（或把上面一行加入
+#    现有 preset）。见仓库根 README 安装步骤 4。
+```
+
+在 base/headless 组合（无 preset）中，bundle 补丁插入的行即已足够。工具从调用 agent 的会话推导目标工作区：会话归属已知工作区时使用该工作区路径，否则使用会话 cwd；两者皆无的调用被拒绝。
 
 ## 场景文件
 

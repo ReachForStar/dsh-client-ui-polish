@@ -10,7 +10,21 @@ The **model-facing Excalidraw scene tools** — `excalidraw_read`, `excalidraw_w
   name: '@reachforstar/dsh-tool-excalidraw'
 ```
 
-Mount the row in an agent preset (the `presets/standard-polished` preset in this repository carries it; on the Web surface the bundle row alone grants no tools, because tools are composed per agent). The tools derive their target workspace from the calling agent's session: a session owned by a known workspace uses that workspace's path, otherwise the session cwd; a caller with neither is rejected.
+## Installation
+
+Two steps, both required on the Web surface:
+
+```sh
+# 1. Install the bundle (registers the tool plugin on the host)
+dsh plugin --profile web add ./packages/tool-excalidraw
+
+# 2. Grant the tools to an agent via a preset: copy the repository's
+#    presets/standard-polished/ to $DSH_HOME/.agent-presets/ and select it as
+#    the agent preset (or add the row above to an existing preset). See the
+#    repository README, Installation step 4.
+```
+
+On a base/headless composition (no presets), the bundle patch's inserted row is enough. The tools derive their target workspace from the calling agent's session: a session owned by a known workspace uses that workspace's path, otherwise the session cwd; a caller with neither is rejected.
 
 ## Scene file
 

@@ -10,6 +10,8 @@ dsh plugin --profile web add ./packages/ui-polish
 
 The bundle patch inserts the `ui-polish` row into the web profile: the node half registers the `/git`, `/bg`, and `/scene` routes plus the `ui-polish` settings namespace, and the browser half is discovered by the client-modules node half from the manifest's `dsh.client` metadata. No harness source changes.
 
+**This package must be installed together with `@reachforstar/dsh-tool-excalidraw`**: the node half imports `SCENE_RELATIVE` from it at runtime (the `/scene` routes and the whiteboard tab share the tool package's scene-file convention), so mounting `ui-polish` alone fails to load `excalidraw-service`. Install both bundles, then mount the whiteboard preset (see the repository README, Installation step 4).
+
 Enhancements (all client-side unless noted):
 
 - **Whole-app background image.** The plugin owns its `ui-polish` settings namespace and paints the image onto the body (`cover` / fixed / centered), marking the document with `data-ds-bg-image`. Its injected global stylesheet overrides the base tokens (`--dsw-alias-bg-base`, `--dsw-specific-sidebar-fill`) to transparent while the attribute is set, so the structural surfaces — app frame, conversation, details, and sidebar — yield to the image; content elements that need contrast (cards, code blocks, buttons) keep their own fills. The settings row in the General section uploads (with size/type validation), previews, and removes the image. The image is persisted as a **file on disk** (served at `/bg/current`) — the settings document stores only the short URL, never megabytes of base64 — so it survives restarts without bloating the settings file.
