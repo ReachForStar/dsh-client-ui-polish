@@ -63,9 +63,9 @@
 
 # Excalidraw whiteboard scene tools: read/write/draw/export the workspace
 # scene file that the web canvas tab renders (`<workspace>/.dsh/excalidraw/`).
-# Requires the @deepseek-ai/dsh-tool-excalidraw bundle installed in the profile.
+# Requires the @reachforstar/dsh-tool-excalidraw bundle installed in the profile.
 - id: tool-excalidraw
-  name: '@deepseek-ai/dsh-tool-excalidraw'
+  name: '@reachforstar/dsh-tool-excalidraw'
 
 # ── background jobs ────────────────────────────────────────────────────────
 
@@ -225,7 +225,7 @@
         backgroundMode: one-shot
         maxDepth: provider-managed
 
-    # Pi coding agent delegation over the installed @deepseek-ai/dsh-subagent-pi
+    # Pi coding agent delegation over the installed @reachforstar/dsh-subagent-pi
     # bundle (the host row registers the provider; this preset row grants the
     # tool to the agent).
     - id: tool-subagent-pi

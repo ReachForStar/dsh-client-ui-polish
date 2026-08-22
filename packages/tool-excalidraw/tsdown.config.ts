@@ -3,7 +3,7 @@
  * both consumed from the tsc-emitted `lib/types`.
  */
 export default [{
-  name: '@deepseek-ai/dsh-tool-excalidraw',
+  name: '@reachforstar/dsh-tool-excalidraw',
   entry: ['lib/types/index.js', 'lib/types/invariant.js'],
   outDir: 'lib',
   format: ['esm'],

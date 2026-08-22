@@ -3,7 +3,7 @@
  * consumed from the tsc-emitted `lib/types`.
  */
 export default [{
-  name: '@deepseek-ai/dsh-llm-amax',
+  name: '@reachforstar/dsh-llm-amax',
   entry: ['lib/types/index.js', 'lib/types/invariant.js'],
   outDir: 'lib',
   format: ['esm'],

@@ -1,4 +1,4 @@
-# @deepseek-ai/dsh-subagent-pi
+# @reachforstar/dsh-subagent-pi
 
 English | [中文](README.zh.md)
 
@@ -30,11 +30,11 @@ The provider advertises no optional start-time capabilities and reports `inherit
 
 Production resolves `pi` from the subprocess execution world's credential-scrubbed `PATH`. Native Pi settings and authentication remain authoritative: the plugin does not install Pi, select a model, create a Pi home, log in, or probe a version. Credential-shaped ambient variables are removed before the explicit `env` overlay is applied, so an API key or token intended for the child must be supplied there.
 
-Install this bundle (`dsh plugin --profile web add @deepseek-ai/dsh-subagent-pi`) to load the provider once on the host; it starts no Pi process until a tool call. The model-facing delegation tool is granted per agent: the `presets/standard-polished` preset in this repository carries the enabled `tool-subagent-pi` row, or add the two rows below to an existing preset (copy a preset and remove `disabled` from the tool row, exactly like the codex/claude-code rows).
+Install this bundle (`dsh plugin --profile web add @reachforstar/dsh-subagent-pi`) to load the provider once on the host; it starts no Pi process until a tool call. The model-facing delegation tool is granted per agent: the `presets/standard-polished` preset in this repository carries the enabled `tool-subagent-pi` row, or add the two rows below to an existing preset (copy a preset and remove `disabled` from the tool row, exactly like the codex/claude-code rows).
 
 ```yaml
 - id: subagent-pi
-  name: '@deepseek-ai/dsh-subagent-pi'
+  name: '@reachforstar/dsh-subagent-pi'
   config:
     env:
       DEEPSEEK_API_KEY: !!js process.env.DEEPSEEK_API_KEY

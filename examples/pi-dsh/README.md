@@ -6,7 +6,7 @@ This example wires the two coding agents together so each can delegate work to t
 
 | Direction | Mechanism | Where |
 |---|---|---|
-| dsh → Pi | The `pi` subagent provider starts `pi --mode rpc` and delegates one task | [`@deepseek-ai/dsh-subagent-pi`](../../packages/subagent-pi/README.md) |
+| dsh → Pi | The `pi` subagent provider starts `pi --mode rpc` and delegates one task | [`@reachforstar/dsh-subagent-pi`](../../packages/subagent-pi/README.md) |
 | Pi → dsh | A Pi Agent Skill runs `dsh-delegate.mjs`, which starts a dsh JSON-RPC agent runtime and returns its final answer | `skills/dsh/SKILL.md` + `bin/dsh-delegate.mjs` |
 
 ## dsh delegates to Pi

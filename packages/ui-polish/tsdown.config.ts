@@ -7,5 +7,5 @@ import { clientBundle } from './tsdown.client.ts'
  * come from the platform module table while Excalidraw + mermaid are inlined.
  */
 export default [
-  ...clientBundle('@deepseek-ai/dsh-client-ui-polish', ['lib/types/index.js', 'lib/types/invariant.js']),
+  ...clientBundle('@reachforstar/dsh-client-ui-polish', ['lib/types/index.js', 'lib/types/invariant.js']),
 ]

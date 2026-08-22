@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-llm-amax",
+  "name": "@reachforstar/dsh-llm-amax",
   "description": "AMAX Token Router model provider for DeepSeek Harness: an OpenAI-compatible gateway route with /v1/models discovery",
   "version": "0.1.1-rc.2",
   "publishConfig": {

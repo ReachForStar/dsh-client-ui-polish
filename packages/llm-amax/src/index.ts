@@ -24,7 +24,7 @@
  *           contextWindow: 262144
  * ```
  *
- * @module @deepseek-ai/dsh-llm-amax
+ * @module @reachforstar/dsh-llm-amax
  */
 
 import type { Context } from '@deepseek-ai/cordis'

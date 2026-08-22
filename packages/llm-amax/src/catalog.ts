@@ -6,7 +6,7 @@
  * guess that would go stale. The credential comes from the `AMAX_API_KEY`
  * environment variable.
  *
- * @module @deepseek-ai/dsh-llm-amax/catalog
+ * @module @reachforstar/dsh-llm-amax/catalog
  */
 
 import { createProvider, envApiKeyAuth } from '@earendil-works/pi-ai'

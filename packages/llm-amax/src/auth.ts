@@ -5,7 +5,7 @@
  * or OAuth flow exists for this route, so the credential store is empty and
  * `modify` never persists.
  *
- * @module @deepseek-ai/dsh-llm-amax/auth
+ * @module @reachforstar/dsh-llm-amax/auth
  */
 
 import { homedir } from 'node:os'

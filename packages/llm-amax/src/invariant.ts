@@ -1,12 +1,12 @@
 /**
- * Package-owned invariant companion for `@deepseek-ai/dsh-llm-amax`.
- * @module @deepseek-ai/dsh-llm-amax/invariant
+ * Package-owned invariant companion for `@reachforstar/dsh-llm-amax`.
+ * @module @reachforstar/dsh-llm-amax/invariant
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { InvariantInstaller } from '@deepseek-ai/dsh-invariants'
 
-const PACKAGE_NAME = '@deepseek-ai/dsh-llm-amax'
+const PACKAGE_NAME = '@reachforstar/dsh-llm-amax'
 
 /** Cordis companion plugin name. */
 export const name = 'llm-amax-invariant'

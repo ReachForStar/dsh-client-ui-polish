@@ -11,7 +11,7 @@
  * its own routes, so a deployment switching between the two provider families
  * observes the same request behavior.
  *
- * @module @deepseek-ai/dsh-llm-amax/profile
+ * @module @reachforstar/dsh-llm-amax/profile
  */
 
 import type { Model, ModelCost, ModelThinkingLevel, Provider, ThinkingLevelMap, Transport } from '@earendil-works/pi-ai'

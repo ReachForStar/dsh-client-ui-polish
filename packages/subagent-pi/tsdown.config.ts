@@ -3,7 +3,7 @@
  * consumed from the tsc-emitted `lib/types`.
  */
 export default [{
-  name: '@deepseek-ai/dsh-subagent-pi',
+  name: '@reachforstar/dsh-subagent-pi',
   entry: ['lib/types/index.js', 'lib/types/invariant.js'],
   outDir: 'lib',
   format: ['esm'],

@@ -1,4 +1,4 @@
-# @deepseek-ai/dsh-subagent-pi
+# @reachforstar/dsh-subagent-pi
 
 [English](README.md) | 中文
 
@@ -30,11 +30,11 @@
 
 生产环境从 subprocess 执行世界的凭据擦除 `PATH` 解析 `pi`。原生 Pi 设置与认证保持权威：本插件不安装 Pi、不选模型、不创建 Pi home、不登录、不探测版本。凭据形态的环境变量在显式 `env` 叠加前被移除，因此给子进程的 API key 或令牌必须在这里提供。
 
-安装本 bundle（`dsh plugin --profile web add @deepseek-ai/dsh-subagent-pi`）后，提供方在宿主机加载一次，在工具调用前不启动任何 Pi 进程。模型面向的委派工具按 agent 授予：本仓库的 `presets/standard-polished` preset 携带已启用的 `tool-subagent-pi` 行，或者把下面两行加入现有 preset（复制 preset 并从工具行移除 `disabled`，与 codex/claude-code 行完全一致）。
+安装本 bundle（`dsh plugin --profile web add @reachforstar/dsh-subagent-pi`）后，提供方在宿主机加载一次，在工具调用前不启动任何 Pi 进程。模型面向的委派工具按 agent 授予：本仓库的 `presets/standard-polished` preset 携带已启用的 `tool-subagent-pi` 行，或者把下面两行加入现有 preset（复制 preset 并从工具行移除 `disabled`，与 codex/claude-code 行完全一致）。
 
 ```yaml
 - id: subagent-pi
-  name: '@deepseek-ai/dsh-subagent-pi'
+  name: '@reachforstar/dsh-subagent-pi'
   config:
     env:
       DEEPSEEK_API_KEY: !!js process.env.DEEPSEEK_API_KEY

@@ -11,7 +11,7 @@
  * adoption. `settings.yaml` remains the only thing that decides what a route
  * serves.
  *
- * @module @deepseek-ai/dsh-llm-amax/discovery
+ * @module @reachforstar/dsh-llm-amax/discovery
  */
 
 import { INVALID_CREDENTIAL_CODE, LlmError, normalizeApiKey } from '@deepseek-ai/dsh-llm'

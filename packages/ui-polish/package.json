@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-client-ui-polish",
+  "name": "@reachforstar/dsh-client-ui-polish",
   "description": "Web GUI polish plugin: whole-app background image, session stats float with cost, file/git/excalidraw panels, and configurable compaction threshold",
   "version": "0.1.1-rc.2",
   "publishConfig": {
@@ -79,7 +79,7 @@
     "@deepseek-ai/dsh-session-stats": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-settings": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-token-meter": "^0.1.1-rc.2",
-    "@deepseek-ai/dsh-tool-excalidraw": "workspace:^",
+    "@reachforstar/dsh-tool-excalidraw": "workspace:^",
     "@deepseek-ai/dsh-tools": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-workspace": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.1-rc.2",
@@ -109,7 +109,7 @@
     "@deepseek-ai/dsh-session-stats": "0.1.1-rc.2",
     "@deepseek-ai/dsh-settings": "0.1.1-rc.2",
     "@deepseek-ai/dsh-token-meter": "0.1.1-rc.2",
-    "@deepseek-ai/dsh-tool-excalidraw": "workspace:^",
+    "@reachforstar/dsh-tool-excalidraw": "workspace:^",
     "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
     "@deepseek-ai/dsh-workspace": "0.1.1-rc.2",
     "@deepseek-ai/schemastery": "3.18.1",
