@@ -26,7 +26,7 @@ describe('discoverModels', () => {
     })
     globalThis.fetch = fetchMock as typeof fetch
     const models = await discoverModels({ provider: 'amax' })
-    expect(models).toEqual([{ id: 'deepseek-v4-flash' }])
+    expect(models).toEqual([{ id: 'deepseek-v4-flash', name: 'deepseek-v4-flash' }])
     const [, init] = fetchMock.mock.calls[0] as [unknown, RequestInit]
     expect(init.method).toBe('GET')
     expect(init.headers).toMatchObject({ accept: 'application/json' })
@@ -46,10 +46,28 @@ describe('discoverModels', () => {
     )
     expect(models).toEqual([
       { id: 'm1', name: 'Model One', contextWindow: 128000, maxTokens: 4096 },
-      { id: 'm2' },
+      { id: 'm2', name: 'm2' },
     ])
     const [, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [unknown, RequestInit]
     expect(init.headers).toMatchObject({ authorization: 'Bearer amax-key-123' })
+  })
+
+  it('falls back to the id as the display name when the listing carries none', async () => {
+    // The OpenAI-compatible listing shape (the AMAX gateway's) carries only
+    // id/object/created/owned_by — no name field.
+    globalThis.fetch = vi.fn(async () => jsonResponse({
+      data: [
+        { id: 'deepseek-v4-flash', object: 'model', created: 0, owned_by: 'amax' },
+        { id: 'deepseek-v3', name: 'DeepSeek V3', display_name: 'V3 Label' },
+        { id: 'qwen-max', model_name: 'Qwen Max' },
+      ],
+    })) as typeof fetch
+    const models = await discoverModels({ provider: 'amax' })
+    expect(models).toEqual([
+      { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash' },
+      { id: 'deepseek-v3', name: 'DeepSeek V3' },
+      { id: 'qwen-max', name: 'Qwen Max' },
+    ])
   })
 
   it('uses a draft-typed key over the stored one', async () => {
