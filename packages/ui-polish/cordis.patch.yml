@@ -1,0 +1,10 @@
+# Installable Profile layer for the Web GUI polish plugin. The row is inserted
+# after the web-app bundle's roster: the node half registers the /git, /bg,
+# and /scene routes plus the ui-polish settings namespace, and the browser
+# half is discovered by the client-modules node half from the manifest's
+# `dsh.client` metadata. Install with:
+#
+#   dsh plugin --profile web add @deepseek-ai/dsh-client-ui-polish
+- insert:
+    - id: ui-polish
+      name: '@deepseek-ai/dsh-client-ui-polish'

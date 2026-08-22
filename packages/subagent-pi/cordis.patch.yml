@@ -1,0 +1,10 @@
+# Installable Profile layer for the Pi coding agent delegation backend. The
+# row registers the `pi` subagent provider on the Host plane (the same pattern
+# the official subagent-codex / subagent-claude-code bundles use); the
+# model-facing delegation tool is granted per agent by an agent preset (see
+# the shipped `presets/standard-polished` in this repository). Install with:
+#
+#   dsh plugin --profile web add @deepseek-ai/dsh-subagent-pi
+- insert:
+    - id: subagent-pi
+      name: '@deepseek-ai/dsh-subagent-pi'

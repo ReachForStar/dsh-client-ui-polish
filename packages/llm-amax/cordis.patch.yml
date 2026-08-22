@@ -1,0 +1,9 @@
+# Installable Profile layer for the AMAX Token Router model provider. The row
+# registers the `amax` route into the LLM registry next to the dormant
+# `llm-pi-ai` row the base bundle mounts; the Models page then offers the
+# gateway, whose models are fetched from its /v1/models listing. Install with:
+#
+#   dsh plugin --profile web add @deepseek-ai/dsh-llm-amax
+- insert:
+    - id: llm-amax
+      name: '@deepseek-ai/dsh-llm-amax'

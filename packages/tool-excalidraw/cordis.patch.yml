@@ -1,0 +1,10 @@
+# Installable Profile layer for the model-facing Excalidraw scene tools. The
+# row registers the excalidraw_read/write/draw/export tools into the host
+# tools registry; on the Web surface the tools are granted per agent, so the
+# same row must also appear in the agent preset (see the shipped
+# `presets/standard-polished` in this repository). Install with:
+#
+#   dsh plugin --profile web add @deepseek-ai/dsh-tool-excalidraw
+- insert:
+    - id: tool-excalidraw
+      name: '@deepseek-ai/dsh-tool-excalidraw'
