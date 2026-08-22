@@ -25,12 +25,13 @@ The `examples/pi-dsh/` directory documents the reverse direction: a dsh skill th
 
 ## Installation
 
-Each package is an installable profile bundle, installed directly from this repository (git or a local checkout) — nothing is published to npm. On the official harness:
+Each package is an installable profile bundle, installed directly from a local checkout — nothing is published to npm, and pnpm cannot install a subdirectory of a git repository, so the checkout is the install vehicle. On the official harness:
 
 ```sh
-# 0. One-time: get the suite locally
+# 0. One-time: clone and build the suite
 git clone https://github.com/ReachForStar/dsh-client-ui-polish.git
 cd dsh-client-ui-polish
+pnpm install        # installs workspace deps and runs each package's prepare build → lib/
 
 # 1. Web GUI polish (client + host routes + settings)
 dsh plugin --profile web add ./packages/ui-polish
@@ -47,7 +48,7 @@ dsh plugin --profile web add ./packages/subagent-pi
 #    rows to an existing preset).
 ```
 
-`dsh plugin` forwards to pnpm inside the profile directory, so a relative path is anchored to your invoking directory and works as-is; absolute paths work too. A git spec (`dsh plugin --profile web add github:ReachForStar/dsh-client-ui-polish/packages/ui-polish#master`) also works — a git-hosted install builds via the package `prepare` script; allowlist the build key pnpm prints in the profile's `pnpm-workspace.yaml`.
+`dsh plugin` forwards to pnpm inside the profile directory, so a relative path is anchored to your invoking directory and works as-is; absolute paths work too. pnpm links the package directory (no copy), so rebuild (`pnpm run build` in the checkout) after changing the plugin source — the `prepare` script builds on `pnpm install` only.
 
 Then restart the host and configure:
 

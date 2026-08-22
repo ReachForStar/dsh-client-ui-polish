@@ -25,12 +25,13 @@
 
 ## 安装
 
-每个包都是可安装的 profile bundle，**直接从本仓库安装（git 或本地 checkout），不发布到 npm**。在官方 harness 上：
+每个包都是可安装的 profile bundle，**从本地 checkout 直接安装**——不发布到 npm；pnpm 无法安装 git 仓库内的子目录，因此 checkout 就是安装载体。在官方 harness 上：
 
 ```sh
-# 0. 一次性：获取套件
+# 0. 一次性：克隆并构建套件
 git clone https://github.com/ReachForStar/dsh-client-ui-polish.git
 cd dsh-client-ui-polish
+pnpm install        # 安装工作区依赖并运行各包 prepare 构建 → lib/
 
 # 1. Web GUI 打磨（客户端 + 宿主路由 + 设置）
 dsh plugin --profile web add ./packages/ui-polish
@@ -46,7 +47,7 @@ dsh plugin --profile web add ./packages/subagent-pi
 #    agent preset（或把 tool-excalidraw / tool-subagent-pi 两行加入现有 preset）
 ```
 
-`dsh plugin` 在 profile 目录里转发给 pnpm，因此相对路径会锚定到你执行命令的目录，直接可用；绝对路径同样可以。git 规格（`dsh plugin --profile web add github:ReachForStar/dsh-client-ui-polish/packages/ui-polish#master`）也可以——git 安装会在 `prepare` 脚本中构建；按 pnpm 打印的提示在 profile 的 `pnpm-workspace.yaml` 里 allowlist 构建密钥。
+`dsh plugin` 在 profile 目录里转发给 pnpm，因此相对路径会锚定到你执行命令的目录，直接可用；绝对路径同样可以。pnpm 以符号链接方式挂载包目录（不复制），因此修改插件源码后需在 checkout 里重新构建（`pnpm run build`）——`prepare` 脚本只在 `pnpm install` 时构建。
 
 然后重启宿主并配置：
 

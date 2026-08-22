@@ -4,7 +4,7 @@
 # same row must also appear in the agent preset (see the shipped
 # `presets/standard-polished` in this repository). Install with:
 #
-#   dsh plugin --profile web add @reachforstar/dsh-tool-excalidraw
+#   dsh plugin --profile web add ./packages/tool-excalidraw
 - insert:
     - id: tool-excalidraw
       name: '@reachforstar/dsh-tool-excalidraw'

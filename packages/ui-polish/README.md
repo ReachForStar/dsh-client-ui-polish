@@ -5,7 +5,7 @@ English | [中文](README.zh.md)
 Installable Web GUI polish plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), the browser-and-host half of the fork customizations. Mount it with:
 
 ```sh
-dsh plugin --profile web add @reachforstar/dsh-client-ui-polish
+dsh plugin --profile web add ./packages/ui-polish
 ```
 
 The bundle patch inserts the `ui-polish` row into the web profile: the node half registers the `/git`, `/bg`, and `/scene` routes plus the `ui-polish` settings namespace, and the browser half is discovered by the client-modules node half from the manifest's `dsh.client` metadata. No harness source changes.

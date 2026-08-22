@@ -4,7 +4,7 @@
 # model-facing delegation tool is granted per agent by an agent preset (see
 # the shipped `presets/standard-polished` in this repository). Install with:
 #
-#   dsh plugin --profile web add @reachforstar/dsh-subagent-pi
+#   dsh plugin --profile web add ./packages/subagent-pi
 - insert:
     - id: subagent-pi
       name: '@reachforstar/dsh-subagent-pi'

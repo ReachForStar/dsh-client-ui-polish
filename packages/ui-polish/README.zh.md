@@ -5,7 +5,7 @@
 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的可安装 Web GUI 打磨插件，即 fork 定制中的浏览器与宿主半侧。安装：
 
 ```sh
-dsh plugin --profile web add @reachforstar/dsh-client-ui-polish
+dsh plugin --profile web add ./packages/ui-polish
 ```
 
 bundle 补丁把 `ui-polish` 行插入 web profile：node 半侧注册 `/git`、`/bg`、`/scene` 路由与 `ui-polish` 设置命名空间，浏览器半侧由 client-modules node 半侧依据清单中的 `dsh.client` 元数据发现。无需改动 harness 源码。

@@ -5,7 +5,7 @@
 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的可安装 [AMAX Token Router](https://ai.amaxsmp.com) 模型提供方：一个带 `/v1/models` 发现的 OpenAI 兼容网关路由，从 fork 定制中抽取为独立插件。安装：
 
 ```sh
-dsh plugin --profile web add @reachforstar/dsh-llm-amax
+dsh plugin --profile web add ./packages/llm-amax
 ```
 
 bundle 补丁把 `llm-amax` 行插入 base bundle 挂载的 dormant `llm-pi-ai` 行旁边。插件注册：

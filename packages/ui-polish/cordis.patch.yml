@@ -4,7 +4,7 @@
 # half is discovered by the client-modules node half from the manifest's
 # `dsh.client` metadata. Install with:
 #
-#   dsh plugin --profile web add @reachforstar/dsh-client-ui-polish
+#   dsh plugin --profile web add ./packages/ui-polish
 - insert:
     - id: ui-polish
       name: '@reachforstar/dsh-client-ui-polish'

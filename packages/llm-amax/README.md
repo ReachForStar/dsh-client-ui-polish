@@ -5,7 +5,7 @@ English | [中文](README.zh.md)
 Installable [AMAX Token Router](https://ai.amaxsmp.com) model provider for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): an OpenAI-compatible gateway route with `/v1/models` discovery, extracted from the fork customizations into a standalone plugin. Mount it with:
 
 ```sh
-dsh plugin --profile web add @reachforstar/dsh-llm-amax
+dsh plugin --profile web add ./packages/llm-amax
 ```
 
 The bundle patch inserts the `llm-amax` row next to the dormant `llm-pi-ai` row the base bundle mounts. The plugin registers:

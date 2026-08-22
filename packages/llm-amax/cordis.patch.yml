@@ -3,7 +3,7 @@
 # `llm-pi-ai` row the base bundle mounts; the Models page then offers the
 # gateway, whose models are fetched from its /v1/models listing. Install with:
 #
-#   dsh plugin --profile web add @reachforstar/dsh-llm-amax
+#   dsh plugin --profile web add ./packages/llm-amax
 - insert:
     - id: llm-amax
       name: '@reachforstar/dsh-llm-amax'
