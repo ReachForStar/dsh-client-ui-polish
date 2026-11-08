@@ -19,10 +19,12 @@ overrides:
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': true
+  cpu-features: true
   esbuild: true
   koffi: true
   node-pty: true
   protobufjs: true
+  ssh2: true
 
 # The 0.2.2-rc.1 pre-releases are newer than pnpm's default minimum release
 # age, and this workspace exists to consume them.
