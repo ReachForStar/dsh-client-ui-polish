@@ -1,19 +1,17 @@
 /**
- * ui-polish browser half: four standalone GUI enhancements that need no core
+ * ui-polish browser half: standalone GUI enhancements that need no core
  * package changes —
  *  - whole-app background image (own settings namespace, own body painting,
  *    token-override transparency for the structural surfaces),
  *  - a session stats float with an estimated cost (a composer.dock entry that
  *    pins itself to the viewport's top-right via position:fixed),
- *  - a git panel as a conversation.view tab (right after the trajectory tab,
- *    talking to /git/* routes registered by the node half),
- *  - a floating file-mutation diff panel (a composer.dock entry that watches
- *    the session for newly settled write/edit calls and draws the applied
- *    change at the right edge).
+ *  - a model rate-card settings row,
+ *  - Git, LaTeX, Excalidraw, and SSH/SFTP conversation.view tabs, talking to
+ *    the node half's /git, /latex, and /scene routes and the ssh Remote surface.
  */
 import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-// Type-only: pulls the settings scope Context merge (ctx.settingsScope).
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+// Type-only: pulls the config forms Context merge (ctx.configForms).
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // Type-only: pulls the ui-settings-general SlotMap merge (the settings.general.item entry).
 import type {} from '@deepseek-ai/dsh-client-ui-settings-general/client'
@@ -21,20 +19,26 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings-general/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // Type-only: pulls the ui-conversation SlotMap merge (the composer.dock entry).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { BACKGROUND_SETTINGS_NAMESPACE, COMPACTION_RATIO_FIELD, type PolishSettings } from '../background-settings.ts'
+// Type-only: pulls the slot registry Context merge (ctx.slots).
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// Type-only: pulls the SSH Remote methods and forwarded PTY event declarations.
+import type {} from '@reachforstar/dsh-host-ssh-remotes/remote'
+import type {} from '@reachforstar/dsh-host-ssh-remotes/types'
+import { BACKGROUND_SETTINGS_NAMESPACE, type PolishSettings } from '../background-settings.ts'
+import { SSH_EVENTS_PATH, type SshPtyFrame } from '../ssh-events-protocol.ts'
 import { BackgroundRuntime } from './background-runtime.ts'
 import { BackgroundRow, type BackgroundRowInjected } from './BackgroundRow.tsx'
-import { CompactionRow, type CompactionRowInjected } from './CompactionRow.tsx'
 import { PricingRow, type PricingRowInjected } from './PricingRow.tsx'
-import { createBackgroundRowStore } from './settings-store.ts'
-import { createModelIndex, modelIndexDefinition, type ModelIndex } from './model-index.ts'
+import { createBackgroundRowStore, createPricingRowStore } from './settings-store.ts'
 import { PricingRuntime } from './pricing-store.ts'
 import { SEED_RATE_CARD } from './cost.ts'
 import { StatsFloat } from './StatsFloat.tsx'
 import { GitPanel } from './GitPanel.tsx'
+import { LatexPanel } from './LatexPanel.tsx'
 import { ExcalidrawPanel } from './ExcalidrawPanel.tsx'
-import { MutationDiffPanel } from './MutationDiffPanel.tsx'
-import { en, zh, type PolishKey } from './locales.ts'
+import { ExcalidrawToolView } from './ExcalidrawToolView.tsx'
+import { SshPanel, type SshPanelInjected, type SshPanelRpcResult } from './SshPanel.tsx'
+import { de, en, es, fr, ja, pt, ru, zh, type PolishKey } from './locales.ts'
 
 export type { BackgroundRowComponentProps, BackgroundRowInjected } from './BackgroundRow.tsx'
 export type { BackgroundRowState } from './settings-store.ts'
@@ -55,14 +59,27 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
  * Structural surfaces turn transparent while the whole-app background image is
  * active: overriding the base tokens makes every surface that paints them
  * (the app frame, conversation, details, and sidebar columns) yield to the
- * body-painted image. Content elements that need contrast (cards, code blocks,
- * buttons) keep their own non-base fills; this is the standalone plugin's
- * reach without touching core stylesheets.
+ * body-painted image. The raised-surface tokens go with them so page content
+ * (cards, rows, panels) reads as part of the image instead of as opaque tiles.
+ * Overlays keep `--dsw-alias-bg-overlay`: menus and dialogs float above the
+ * page and would lose their contrast against a photograph. The canvas panel is
+ * the one page that stays opaque — Excalidraw paints its own view background,
+ * and a see-through drawing surface removes the contrast drawing needs — so the
+ * raised-surface tokens are re-declared inside it from the un-overridden
+ * overlay colour.
  */
 const AMBIENT_OVERRIDES = `
 body[data-ds-bg-image] {
   --dsw-alias-bg-base: transparent;
+  --dsw-alias-bg-layer-1: transparent;
+  --dsw-alias-bg-layer-2: transparent;
   --dsw-specific-sidebar-fill: transparent;
+}
+body[data-ds-bg-image] [data-ui-polish-excalidraw] {
+  --dsw-alias-bg-base: var(--dsw-alias-bg-overlay);
+  --dsw-alias-bg-layer-1: var(--dsw-alias-bg-overlay);
+  --dsw-alias-bg-layer-2: var(--dsw-alias-bg-overlay);
+  --dsw-specific-sidebar-fill: var(--dsw-alias-bg-overlay);
 }
 /* This plugin owns the composer.dock readout: its floating stats panel carries
    a data-ui-polish-stats marker, so every other dock entry (the core's
@@ -74,7 +91,7 @@ body[data-ds-bg-image] {
 `
 
 /** Required services: settings transport plus slots/locale for the registrations. */
-export const inject = ['slots', 'locale', 'connection', 'remote', 'settingsScope', 'conversationEvents']
+export const inject = ['slots', 'locale', 'configForms', 'remote', 'remote.ssh']
 
 /**
  * Client plugin body: bind the background preference, paint the body, and
@@ -82,7 +99,7 @@ export const inject = ['slots', 'locale', 'connection', 'remote', 'settingsScope
  * @param ctx - client cordis context.
  */
 export function apply(ctx: ClientContext): void {
-  const host = ctx.settingsScope.bind<PolishSettings>({ namespace: BACKGROUND_SETTINGS_NAMESPACE })
+  const host = ctx.configForms.get<PolishSettings>(BACKGROUND_SETTINGS_NAMESPACE)
   const background = new BackgroundRuntime(ctx, host)
   // Model rate card owner: shared by the stats float (pricing) and the
   // settings row (editing). One instance keeps the scope subscription single.
@@ -98,21 +115,8 @@ export function apply(ctx: ClientContext): void {
   }, 'ui-polish: ambient background overrides')
   ctx.effect(() => () => { background.dispose() }, 'ui-polish: background dispose')
 
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-polish: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { zh, en, ja, es, fr, de, ru, pt }), 'ui-polish: dictionaries')
   const t = ctx.locale.bind(NS)
-
-  // Per-model billing index: this plugin's own messageId → model record, fed
-  // by a state-only Conversation Definition over the same assistant/message
-  // events the core nodes fold (the core nodes carry usage but not model
-  // provenance — upstream gap). StatsFloat reads the index through its
-  // injected `modelOf` face.
-  const modelIndex = createModelIndex()
-  ctx.inject(['conversationEvents'], (scope: ClientContext) => {
-    const conversationEvents = scope.conversationEvents
-    scope.effect(() => conversationEvents.register(
-      modelIndexDefinition(modelIndex),
-    ), 'ui-polish: model index definition')
-  })
 
   const store = createBackgroundRowStore()
   let bound: BoundActions<typeof store> | undefined
@@ -140,37 +144,34 @@ export function apply(ctx: ClientContext): void {
     inject: injected,
   }, BackgroundRow))
 
-  // Automatic-compaction threshold row: reads and writes the durable
-  // ui-polish settings field the node half's per-step control consumes.
-  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-    name: 'settings.general.item',
-    id: 'polish-compaction',
-    order: 40,
-    locale: NS,
-    inject: (): CompactionRowInjected => ({
-      currentRatio: host.getSnapshot().value?.compactionThresholdRatio ?? null,
-      setRatio: (ratio) => {
-        if (ratio === null) void host.unset(COMPACTION_RATIO_FIELD)
-        else void host.set(COMPACTION_RATIO_FIELD, ratio)
-      },
-    }),
-  }, CompactionRow))
-
   // Model rate card row: edit the JSON card that prices the stats float. The
   // row shares the plugin settings scope; the pricing runtime adopts and
   // validates the durable text, so a saved card survives restarts and the
-  // float re-prices immediately.
+  // float re-prices immediately. A store mirrors the durable card text and
+  // whether a user card is set so the reset gate follows a change.
+  const pricingStore = createPricingRowStore()
+  let pricingBound: BoundActions<typeof pricingStore> | undefined
+  let pricingRevision = 0
+  const syncPricing = (): void => {
+    pricingRevision += 1
+    const json = pricing.getUserJson()
+    pricingBound?.sync(json ?? JSON.stringify(SEED_RATE_CARD, null, 2), json !== null, pricingRevision)
+  }
+  ctx.effect(() => host.subscribe(syncPricing), 'ui-polish: pricing row adopt')
   ctx.slots.inject('settings.general.item', () => ctx.slots.register({
     name: 'settings.general.item',
     id: 'polish-pricing',
     order: 50,
+    store: pricingStore,
     locale: NS,
-    inject: (): PricingRowInjected => ({
-      currentJson: pricing.getUserJson() ?? JSON.stringify(SEED_RATE_CARD, null, 2),
-      hasCustom: pricing.getUserJson() !== null,
-      save: (json) => { pricing.save(json) },
-      reset: () => { pricing.reset() },
-    }),
+    inject: (actions: BoundActions<typeof pricingStore>): PricingRowInjected => {
+      pricingBound = actions
+      syncPricing()
+      return {
+        save: (json) => { pricing.save(json) },
+        reset: () => { pricing.reset() },
+      }
+    },
   }, PricingRow))
 
   ctx.slots.inject('conversation.composer.dock', function* () {
@@ -179,25 +180,66 @@ export function apply(ctx: ClientContext): void {
       id: 'polish-stats',
       order: 0,
       locale: NS,
-      inject: (): { modelOf: ModelIndex['modelOf']; card: ReturnType<PricingRuntime['getCard']> } => ({
-        modelOf: modelIndex.modelOf,
+      inject: (): { card: ReturnType<PricingRuntime['getCard']> } => ({
         card: pricing.getCard(),
       }),
     }, StatsFloat)
   })
 
-  // File panel: a conversation.view tab (between the trajectory and Git tabs)
-  // listing every file a settled tool call operated on, with in-place editing.
+  const sshRpc = async (
+    method: string,
+    payload: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<SshPanelRpcResult> => {
+    const result = method === 'ssh.list'
+      ? await ctx.remote.ssh.list()
+      : method === 'ssh.exec'
+        ? await ctx.remote.ssh.exec(payload as never, signal)
+        : method === 'ssh.pty.open'
+          ? await ctx.remote.ssh.ptyOpen(payload as never, signal)
+          : method === 'ssh.pty.attach'
+            ? await ctx.remote.ssh.ptyAttach(payload as never)
+            : method === 'ssh.pty.write'
+              ? await ctx.remote.ssh.ptyWrite(payload as never)
+              : method === 'ssh.pty.resize'
+                ? await ctx.remote.ssh.ptyResize(payload as never)
+                : method === 'ssh.pty.close'
+                  ? await ctx.remote.ssh.ptyClose(payload as never)
+                  : method === 'ssh.sftp.list'
+                    ? await ctx.remote.ssh.sftpList(payload as never, signal)
+                    : method === 'ssh.sftp.mkdir'
+                      ? await ctx.remote.ssh.sftpMkdir(payload as never, signal)
+                      : method === 'ssh.sftp.remove'
+                        ? await ctx.remote.ssh.sftpRemove(payload as never, signal)
+                        : method === 'ssh.sftp.rename'
+                          ? await ctx.remote.ssh.sftpRename(payload as never, signal)
+                          : method === 'ssh.sftp.stat'
+                            ? await ctx.remote.ssh.sftpStat(payload as never, signal)
+                            : undefined
+    if (result === undefined) throw new Error(t('ssh.unsupportedMethod', { method }))
+    return result.ok
+      ? { ok: true, value: result.value }
+      : { ok: false, error: { message: `${result.error.code}: ${result.error.message}` } }
+  }
+
+  // The official forwarded-event allowlist has no ssh/* entry, so PTY frames
+  // arrive over the host half's own SSE route instead of `ctx.remote.$on`.
+  const subscribeSshFrames = (
+    onFrame: Parameters<SshPanelInjected['subscribeHostFrames']>[0],
+    onDrop: Parameters<SshPanelInjected['subscribeHostFrames']>[1],
+  ): (() => void) => {
+    const source = new EventSource(SSH_EVENTS_PATH)
+    source.onmessage = (message: MessageEvent<string>) => {
+      const frame = JSON.parse(message.data) as SshPtyFrame
+      if (frame.type === 'ssh/pty/output') onFrame(frame)
+      else onDrop(frame.ptyId)
+    }
+    return () => source.close()
+  }
+
   ctx.slots.inject('conversation.view', function* () {
-    yield ctx.slots.register({
-      name: 'conversation.view',
-      id: 'files',
-      order: 15,
-      locale: NS,
-      label: () => t('diff.tab'),
-    }, MutationDiffPanel)
     // Git panel as a conversation view tab: appears in the top tab ring right
-    // after the file tab, rendered only when selected. Collapsed state and
+    // after the trajectory tab, rendered only when selected. Collapsed state and
     // fetch caching live in the component.
     yield ctx.slots.register({
       name: 'conversation.view',
@@ -215,5 +257,45 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       label: () => t('excalidraw.title'),
     }, ExcalidrawPanel)
+    // LaTeX editor: Overleaf-style project/edit/compile/PDF-preview over the
+    // local TeX distribution (xelatex, bibtex, fonts, AI writing).
+    yield ctx.slots.register({
+      name: 'conversation.view',
+      id: 'latex',
+      order: 27,
+      locale: NS,
+      label: () => t('latex.tab'),
+    }, LatexPanel)
+    // SSH/SFTP: interactive PTY terminal + streaming file manager.
+    yield ctx.slots.register({
+      name: 'conversation.view',
+      id: 'ssh',
+      order: 30,
+      locale: NS,
+      label: () => t('ssh.title'),
+      inject: (): SshPanelInjected => ({
+        rpc: sshRpc,
+        subscribeHostFrames: subscribeSshFrames,
+      }),
+    }, SshPanel)
+  })
+
+  // Excalidraw tool call cards: register a dedicated toolview for each of the
+  // three model-facing tools so the card carries an "Open in canvas" button,
+  // an inline SVG thumbnail of the resulting scene, and auto-switches to the
+  // canvas tab when a live result arrives.
+  ctx.slots.inject('tool.call.toolview', function* () {
+    yield ctx.slots.register(
+      { name: 'tool.call.toolview', key: 'excalidraw_draw', locale: NS },
+      ExcalidrawToolView,
+    )
+    yield ctx.slots.register(
+      { name: 'tool.call.toolview', key: 'excalidraw_write', locale: NS },
+      ExcalidrawToolView,
+    )
+    yield ctx.slots.register(
+      { name: 'tool.call.toolview', key: 'excalidraw_export', locale: NS },
+      ExcalidrawToolView,
+    )
   })
 }

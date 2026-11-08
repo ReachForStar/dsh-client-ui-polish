@@ -1,0 +1,4 @@
+# Model-facing SSH tools; grant them per agent through an agent preset.
+insert:
+  - id: tool-ssh
+    name: '@reachforstar/dsh-tool-ssh'

@@ -1,0 +1,66 @@
+{
+  "name": "@reachforstar/dsh-ssh-local",
+  "description": "Local ssh2 implementation of the DeepSeek Harness SSH/SFTP capability seam",
+  "version": "0.2.2-rc.1",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ReachForStar/dsh-client-ui-polish.git",
+    "directory": "packages/ssh-local"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "locale/*.json",
+    "lib/index.js",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@reachforstar/dsh-ssh": "workspace:^",
+    "@deepseek-ai/dsh-timeout": "0.2.2-rc.1",
+    "@deepseek-ai/cordis": "~4.1.0",
+    "@deepseek-ai/dsh-settings": "0.2.2-rc.1"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.19.0",
+    "ssh2": "^1.17.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "~4.1.0",
+    "@deepseek-ai/cordis-plugin-loader": "^1.1.0",
+    "@deepseek-ai/dsh-settings": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-timeout": "0.2.2-rc.1",
+    "@reachforstar/dsh-ssh": "workspace:^",
+    "@types/node": "^22.10.0",
+    "@types/ssh2": "^1.15.5",
+    "tsdown": "^0.22.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.0.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepare": "pnpm run build"
+  }
+}

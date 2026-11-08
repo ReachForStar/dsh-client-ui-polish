@@ -1,0 +1,5 @@
+# Local ssh2-backed provider for `ctx.ssh`: connection definitions and host
+# keys persist in the `ssh` settings namespace.
+insert:
+  - id: ssh-local
+    name: '@reachforstar/dsh-ssh-local'

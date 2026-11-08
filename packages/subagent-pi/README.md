@@ -1,12 +1,73 @@
+---
+description: "Configure the Pi subagent provider for one-shot delegated coding tasks over the Pi RPC protocol."
+kind: "package-reference"
+---
+
 # @reachforstar/dsh-subagent-pi
 
 English | [中文](README.zh.md)
 
-This package registers the fixed `pi` subagent provider. Each accepted run starts the [Pi coding agent](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`) in its RPC mode in the delegating Session's workspace, submits one self-contained text task over the Pi line-delimited JSON stdio protocol, and returns only the final answer through the shared `@deepseek-ai/dsh-subagent` result contract.
+## Summary
+
+Use this package to delegate one self-contained text task to a Pi coding-agent process. It returns only the final answer, keeps the child workspace at the parent Session cwd, and cleans up the process tree on completion or cancellation.
+
+## Table of Contents
+
+- [Use this package](#use-this-package)
+- [Understand the implementation](#understand-the-implementation)
+- [Further Exploration](#further-exploration)
+- [Model Experience](#model-experience)
+- [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [Dev Note](#dev-note)
+
+-----
+
+<a id="use-this-package"></a>
+## Use this package
+
+Mount the provider and its tool consumer in a Host composition when delegated Pi coding tasks are required.
+
+### When to choose it
+
+Choose this provider when Pi is installed and independently configured. Use the native in-process or ACP subagent providers when the child must inherit the parent context or expose a different lifecycle.
+
+### Minimal configuration
+
+```yaml
+- id: subagent-pi
+  name: '@reachforstar/dsh-subagent-pi'
+```
+
+The provider's accepted fields are listed in the generated configuration catalog.
+
+-----
+
+<a id="understand-the-implementation"></a>
+## Understand the implementation
+
+<details>
+<summary>Implementation internals — click to expand</summary>
+
+The provider starts Pi through the subprocess capability, waits for an RPC readiness response, submits one prompt, and reads the last assistant text. Cancellation and disposal terminate the managed process tree and wait for quiescence.
+
+</details>
+
+-----
+
+<a id="further-exploration"></a>
+## Further Exploration
+
+- Subagent capability — shared provider contract.
+- Tool subagent — model-facing delegation consumer.
+- Subprocess capability — managed child-process contract.
+
+-----
+
+This package registers the fixed `pi` subagent provider. Each accepted run starts the [Pi coding agent](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`) in its RPC mode in the delegating Session's workspace, submits one self-contained text task over the Pi line-delimited JSON stdio protocol, and returns only the final answer through the shared `dsh-subagent` result contract.
 
 ## Start and ownership
 
-`start(request)` accepts only a non-empty sequence of text blocks and derives the child cwd from the parent Session. It then spawns the fixed `pi --mode rpc` command through `@deepseek-ai/dsh-subprocess` and publishes the run only after the RPC server answered a `get_state` readiness probe. A failure or cancellation before publication closes the wire, terminates the managed process tree, waits for it to exit, and rejects `start()`.
+`start(request)` accepts only a non-empty sequence of text blocks and derives the child cwd from the parent Session. It then spawns the fixed `pi --mode rpc` command through `dsh-subprocess` and publishes the run only after the RPC server answered a `get_state` readiness probe. A failure or cancellation before publication closes the wire, terminates the managed process tree, waits for it to exit, and rejects `start()`.
 
 The published `run.result` starts exactly one turn. It sends a `prompt` command, waits for the streamed `agent_settled` event, then reads the terminal answer with `get_last_assistant_text` — the last non-empty assistant text. Pi's RPC responses carry no committed partial-output projection, so cancellation and failure settle with an empty output snapshot. A settled run without an answer, a `prompt` response with `success: false`, a protocol failure, or a process failure all map to `error`; the provider produces neither `max-tokens` nor `refusal`.
 
@@ -30,7 +91,7 @@ The provider advertises no optional start-time capabilities and reports `inherit
 
 Production resolves `pi` from the subprocess execution world's credential-scrubbed `PATH`. Native Pi settings and authentication remain authoritative: the plugin does not install Pi, select a model, create a Pi home, log in, or probe a version. Credential-shaped ambient variables are removed before the explicit `env` overlay is applied, so an API key or token intended for the child must be supplied there.
 
-Install this bundle (`dsh plugin --profile web add ./packages/subagent-pi`) to load the provider once on the host; it starts no Pi process until a tool call. The model-facing delegation tool is granted per agent: the `presets/standard-polished` preset in this repository carries the enabled `tool-subagent-pi` row, or add the two rows below to an existing preset (copy a preset and remove `disabled` from the tool row, exactly like the codex/claude-code rows).
+Shipped profiles load this provider once on the host and start no Pi process until a tool call. Full Agent Presets carry the tool row below with `disabled: true`; copy a preset and remove that field to expose `subagent_pi` only to agents composed from the copy. A custom host composition can still use both rows directly.
 
 ```yaml
 - id: subagent-pi
@@ -93,3 +154,13 @@ Append-only: the new tool result follows the reusable parent request prefix.
 - **Final text only** — reasoning, intermediate messages, tool traffic, usage, stderr, and workspace diffs remain product-local; cancellation and failure carry no partial output because Pi's RPC protocol exposes no committed partial projection.
 - **No optional shared capabilities** — output schemas, child personas, tool filtering, and harness depth enforcement are rejected by the shared service for this provider.
 - **No wall-clock timeout or side-effect rollback** — the caller cancels long work, and files or external systems changed before cancellation are not restored.
+
+<a id="dev-note"></a>
+### Dev Note
+
+<details>
+<summary>Working context for maintainers — click to expand</summary>
+
+None.
+
+</details>

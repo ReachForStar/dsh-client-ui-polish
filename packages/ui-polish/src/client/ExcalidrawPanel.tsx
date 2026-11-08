@@ -5,14 +5,24 @@
 // change notifications back via /scene/write. Excalidraw + mermaid are inlined
 // into the plugin client bundle; react/react-dom come from the platform.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw'
+import { useCallback, useEffect, lazy, Suspense, useMemo, useRef, useState } from 'react'
+// Excalidraw loads lazily: its dist entry pulls an extensionless subpath
+// (roughjs/bin/rough) that only a bundler resolves, so the client module
+// import (roster boot, whole-client test) must not load it eagerly.
+import type { Excalidraw as ExcalidrawComponent } from '@excalidraw/excalidraw'
+const Excalidraw = lazy(async () => {
+  const mod = await import('@excalidraw/excalidraw')
+  return { default: mod.Excalidraw }
+}) as unknown as typeof ExcalidrawComponent
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 // Excalidraw ships no auto-injected stylesheet; the tsdown plain-css plugin
 // inlines this exact specifier into a <style> tag in the client bundle.
 import '@excalidraw/excalidraw/dist/prod/index.css'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { WorkspaceListState } from '@deepseek-ai/dsh-client-runtime/client'
+import type { WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
+// Type-only: pulls the session/workspace slot hooks (useSession/useWorkspaces).
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import css from './ExcalidrawPanel.module.css'
 
 /** Full component props: conversation view share + the ui-polish locale seat. */
@@ -21,7 +31,7 @@ export type ExcalidrawPanelProps = PropsRuntime<'conversation.view'> & PropsLoca
 /** The workspace path owning the current session, if any. */
 function workspacePathOf(
   sessionId: string | undefined,
-  items: readonly WorkspaceListState['items'][number][],
+  items: readonly WorkspaceView[],
 ): string | undefined {
   if (sessionId === undefined) return undefined
   return items.find(item => item.sessionIds.includes(sessionId as never))?.path
@@ -115,6 +125,7 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
   const workspaceItems = useWorkspaces(s => s.items)
   const cwd = workspacePathOf(sessionId, workspaceItems)
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null)
+  const [apiReady, setApiReady] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const loadedOnce = useRef(false)
@@ -168,6 +179,7 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
 
   const handleApi = useCallback((api: ExcalidrawImperativeAPI): void => {
     apiRef.current = api
+    setApiReady(true)
     if (!loadedOnce.current && cwd !== undefined) {
       loadedOnce.current = true
       loadScene(api)
@@ -239,11 +251,13 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
   const frame = useMemo(() => {
     if (cwd === undefined) return null
     return (
-      <Excalidraw
-        excalidrawAPI={handleApi}
-        onChange={handleChange}
-        theme={theme}
-      />
+      <Suspense fallback={null}>
+        <Excalidraw
+          excalidrawAPI={handleApi}
+          onChange={handleChange}
+          theme={theme}
+        />
+      </Suspense>
     )
   }, [cwd, handleApi, handleChange, theme])
 
@@ -251,7 +265,11 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
   const [exporting, setExporting] = useState(false)
   const exportPng = useCallback(async (): Promise<void> => {
     const api = apiRef.current
-    if (api === null || exporting) return
+    if (api === null) {
+      setError(t('excalidraw.canvasNotReady'))
+      return
+    }
+    if (exporting) return
     setExporting(true)
     setError(null)
     try {
@@ -261,6 +279,7 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
        * excalidraw's appState is a loose record by design */
       const viewBackgroundColor = appState['viewBackgroundColor']
       const background = typeof viewBackgroundColor === 'string' ? viewBackgroundColor : '#ffffff'
+      const { exportToBlob } = await import('@excalidraw/excalidraw')
       const blob = await exportToBlob({
         elements,
         appState: appState as never,
@@ -284,6 +303,46 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
     }
   }, [exporting])
 
+  // Export the canvas as an SVG download (vector source, no background option).
+  const exportSvg = useCallback(async (): Promise<void> => {
+    const api = apiRef.current
+    if (api === null) {
+      setError(t('excalidraw.canvasNotReady'))
+      return
+    }
+    if (exporting) return
+    setExporting(true)
+    setError(null)
+    try {
+      const elements = api.getSceneElements()
+      const appState = api.getAppState() as Record<string, unknown>
+      /* oxlint-disable typescript/no-unsafe-assignment, typescript/no-unsafe-call, typescript/no-unsafe-argument --
+       * excalidraw's appState is a loose record by design */
+      const { exportToSvg } = await import('@excalidraw/excalidraw')
+      const svg = await exportToSvg({
+        elements,
+        appState: appState as never,
+        files: api.getFiles() as never,
+        exportPadding: 10,
+      })
+      const source = new XMLSerializer().serializeToString(svg)
+      const blob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      const name = typeof api.getName() === 'string' && api.getName().length > 0 ? api.getName() : 'canvas'
+      anchor.href = url
+      anchor.download = `${name}.svg`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.setTimeout(() => { URL.revokeObjectURL(url) }, 2000)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setExporting(false)
+    }
+  }, [exporting])
+
   return (
     <div className={css.view} data-ui-polish-excalidraw="">
       <div className={css.toolbar}>
@@ -293,10 +352,17 @@ export function ExcalidrawPanel({ useSession, useWorkspaces, t }: ExcalidrawPane
           {saving && <span className={css.saving}>{t('excalidraw.saving')}</span>}
           <button
             type="button" className={css.export}
-            disabled={exporting || cwd === undefined}
+            disabled={exporting || !apiReady || cwd === undefined}
             onClick={() => { void exportPng() }}
           >
-            {t('excalidraw.export')}
+            {exporting ? t('excalidraw.exporting') : t('excalidraw.export')}
+          </button>
+          <button
+            type="button" className={css.export}
+            disabled={exporting || !apiReady || cwd === undefined}
+            onClick={() => { void exportSvg() }}
+          >
+            {exporting ? t('excalidraw.exporting') : t('excalidraw.exportSvg')}
           </button>
         </span>
       </div>

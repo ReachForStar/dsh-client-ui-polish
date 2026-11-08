@@ -5,7 +5,7 @@
   flex-direction: column;
   gap: 8px;
   padding: 16px 0;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
 }
 
 .title {
@@ -25,8 +25,8 @@
 .action {
   box-sizing: border-box;
   padding: 6px 14px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   font: inherit;
   font-size: 13px;
@@ -35,16 +35,18 @@
   cursor: pointer;
 }
 
-.action:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+@media (hover: hover) {
+  .action:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
 }
 
 .preview {
   width: 72px;
   height: 44px;
   object-fit: cover;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
 }
 
 /* Hidden file picker; opened programmatically by the upload button. */
@@ -61,8 +63,8 @@
 .select {
   box-sizing: border-box;
   padding: 6px 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   font: inherit;
   font-size: 13px;
@@ -86,8 +88,8 @@
   box-sizing: border-box;
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   font: inherit;
   font-size: 12px;
@@ -99,8 +101,8 @@
 
 .button {
   padding: 6px 12px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   font: inherit;
   font-size: 13px;

@@ -1,0 +1,5 @@
+# SSH provider seam (`ctx.ssh`). Providers implement it; nothing mounts this
+# package on its own.
+insert:
+  - id: ssh
+    name: '@reachforstar/dsh-ssh'

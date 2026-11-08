@@ -1,0 +1,4 @@
+# SSH/SFTP connection-management page in Settings.
+insert:
+  - id: ui-ssh
+    name: '@reachforstar/dsh-client-ui-ssh'

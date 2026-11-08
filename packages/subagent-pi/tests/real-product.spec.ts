@@ -3,9 +3,11 @@ import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { mountWorkingDirectoryFixture } from './working-directory-fixture.ts'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import type { SubprocessHandle } from '@deepseek-ai/dsh-subprocess'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
@@ -31,7 +33,9 @@ afterEach(async () => {
 interface RealHarness {
   readonly ctx: Context
   readonly handles: SubprocessHandle[]
+  /** Parent stand-in for the request type; a provider-level run never reaches the activation manager. */
   readonly parent: Agent
+  readonly workspace: string
   readonly agentDir: string
 }
 
@@ -55,6 +59,10 @@ async function realHarness(): Promise<RealHarness> {
   }
   const ctx = new Context()
   contexts.push(ctx)
+  // The subagent seam resolves the child cwd through ctx.workingDirectory.
+  await mountWorkingDirectoryFixture(ctx)
+  // SubagentRuntime injects the projection registry; the seam does not mount it.
+  await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SubagentRuntime)
   await ctx.plugin(LocalSubprocessRuntime)
   const handles: SubprocessHandle[] = []
@@ -71,11 +79,8 @@ async function realHarness(): Promise<RealHarness> {
     disposeEofGraceMs: 2_000,
     disposeGraceMs: 2_000,
   })
-  const parent = {
-    id: 'pi-real-parent',
-    session: { header: { cwd: workspace } },
-  } as unknown as Agent
-  return { ctx, handles, parent, agentDir }
+  const parent = { id: 'pi-real-parent' } as unknown as Agent
+  return { ctx, handles, parent, workspace, agentDir }
 }
 
 async function expectQuiescent(handles: readonly SubprocessHandle[]): Promise<void> {
@@ -90,12 +95,13 @@ async function expectQuiescent(handles: readonly SubprocessHandle[]): Promise<vo
 
 describe('real @earendil-works/pi-coding-agent 0.84.2 product', () => {
   it('starts the real Pi RPC server, redirects its dirs, and maps the keyless prompt to error', async () => {
-    const { ctx, handles, parent, agentDir } = await realHarness()
+    const { ctx, handles, parent, workspace, agentDir } = await realHarness()
     expect(piPackage.version).toBe('0.84.2')
 
-    const run = await ctx.subagents.start('pi', {
+    const run = await ctx.subagents.getProvider('pi')!.start!({
       prompt: [{ type: 'text', text: 'Return OK.' }],
       parent,
+      cwd: workspace,
       signal: new AbortController().signal,
     })
     // No provider is configured in this keyless fixture, so Pi's prompt

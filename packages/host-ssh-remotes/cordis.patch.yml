@@ -1,0 +1,4 @@
+# Connection-management Remote gateway over `ctx.ssh` for the browser.
+insert:
+  - id: ssh-remotes
+    name: '@reachforstar/dsh-host-ssh-remotes'

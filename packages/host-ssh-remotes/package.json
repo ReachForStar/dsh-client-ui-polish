@@ -1,0 +1,78 @@
+{
+  "name": "@reachforstar/dsh-host-ssh-remotes",
+  "description": "Host Remote gateway for the SSH connection-management surface of the Web GUI",
+  "version": "0.2.2-rc.1",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ReachForStar/dsh-client-ui-polish.git",
+    "directory": "packages/host-ssh-remotes"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./types": {
+      "types": "./lib/types/types.d.ts",
+      "default": "./lib/types/types.js"
+    },
+    "./typert": {
+      "types": "./typert/typert.host.d.ts",
+      "default": "./typert/typert.host.js"
+    },
+    "./remote": {
+      "types": "./typert/typert.remote-client.d.ts",
+      "default": "./typert/typert.remote-client.js"
+    },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "locale/*.json",
+    "lib/index.js",
+    "lib/types/**/*.js",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml",
+    "typert/typert.host.js",
+    "typert/typert.host.d.ts",
+    "typert/typert.remote-client.js",
+    "typert/typert.remote-client.d.ts"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "@reachforstar/dsh-ssh": "workspace:^",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.1",
+    "@deepseek-ai/cordis": "~4.1.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "~4.1.0",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.1",
+    "@reachforstar/dsh-ssh": "workspace:^",
+    "@types/node": "^22.10.0",
+    "tsdown": "^0.22.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.0.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepare": "pnpm run build"
+  }
+}

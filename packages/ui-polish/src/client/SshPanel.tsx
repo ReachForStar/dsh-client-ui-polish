@@ -1,0 +1,1058 @@
+/**
+ * SSH/SFTP panel: a conversation.view tab providing an interactive PTY
+ * terminal (xterm.js) and a streaming SFTP file manager.
+ *
+ * The connection selector lists stored SSH connections. The PTY and SFTP
+ * operate on the selected connection. PTY output arrives through the shared
+ * Remote event stream; SFTP file transfer uses authenticated GET/POST routes.
+ *
+ * The SFTP file manager is an independent, always-usable browser: selecting a
+ * connection loads its directory immediately. When the terminal is open, a
+ * prompt tracker optionally follows the shell cwd so `cd` in the terminal
+ * switches the SFTP view — but manual SFTP navigation pauses that follow to
+ * avoid yanking the view back.
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
+import type { PropsRuntime, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import css from './SshPanel.module.css'
+
+/** DSH body attribute the theme presenter toggles for the dark palette. */
+const DARK_ATTRIBUTE = 'data-ds-dark-theme'
+
+/** xterm dark palette (Catppuccin Mocha), applied while DSH is in dark mode. */
+const DARK_THEME = { background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc' }
+
+/** xterm light palette (Catppuccin Latte), applied while DSH is in light mode. */
+const LIGHT_THEME = { background: '#eff1f5', foreground: '#4c4f69', cursor: '#dc8a78' }
+
+/** Resolve the xterm palette for the current DSH color mode. */
+function resolveTheme(): { background: string; foreground: string; cursor: string } {
+  return document.body.hasAttribute(DARK_ATTRIBUTE) ? DARK_THEME : LIGHT_THEME
+}
+
+/** One SSH Remote call result consumed by the panel. */
+export interface SshPanelRpcResult {
+  ok: boolean
+  value?: unknown
+  error?: { message: string }
+}
+
+/** SSH operations and PTY event subscriptions supplied by the plugin owner. */
+export interface SshPanelInjected {
+  rpc: (method: string, payload: Record<string, unknown>, signal?: AbortSignal) => Promise<SshPanelRpcResult>
+  subscribeHostFrames: (
+    onFrame: (frame: HostFrameLike) => void,
+    onDrop: (ptyId: string) => void,
+  ) => () => void
+}
+
+/** Full component props: conversation view share + locale + SSH operations. */
+export type SshPanelProps = PropsRuntime<'conversation.view'> & PropsLocale<'ui-polish'> & SshPanelInjected
+
+interface SshConnectionView {
+  id: string
+  name: string
+  host: string
+  port: number
+  user: string
+  authKind: 'password' | 'privateKey'
+}
+
+interface SftpEntryView {
+  name: string
+  path: string
+  type: 'file' | 'directory' | 'symlink' | 'other'
+  size: number
+  mtime: number
+}
+
+/** One PTY frame projected off the WebSocket `server-request` payload. */
+interface HostFrameLike {
+  type: string
+  ptyId?: string
+  data?: string
+  exitCode?: number | null
+  signal?: string | null
+  dropped?: boolean
+}
+
+/** Join a directory and a child name into an absolute remote path. */
+function joinPath(dir: string, name: string): string {
+  return dir === '/' ? `/${name}` : `${dir}/${name}`
+}
+
+/** Parent of an absolute path ('/' stays '/'). */
+function parentOf(path: string): string {
+  if (path === '/' || path === '') return '/'
+  const trimmed = path.replace(/\/+$/, '')
+  const idx = trimmed.lastIndexOf('/')
+  if (idx <= 0) return '/'
+  return trimmed.slice(0, idx)
+}
+
+/**
+ * Split an absolute path into clickable breadcrumb segments (prefix + label).
+ * `/var/log` becomes `[{ prefix: '/', label: '/' }, { prefix: '/var', label: 'var' }]`.
+ */
+function pathSegments(path: string): Array<{ prefix: string; label: string }> {
+  if (path === '/' || path === '') return [{ prefix: '/', label: '/' }]
+  const trimmed = path.replace(/\/+$/, '')
+  const parts = trimmed.split('/').filter(p => p !== '')
+  const segments: Array<{ prefix: string; label: string }> = [{ prefix: '/', label: '/' }]
+  let acc = ''
+  for (const part of parts) {
+    acc += `/${part}`
+    segments.push({ prefix: acc, label: part })
+  }
+  return segments
+}
+
+/** Resolve the remote home directory by running `echo $HOME`. Returns null on failure. */
+async function resolveHomeDir(
+  rpc: SshPanelInjected['rpc'],
+  connectionId: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  try {
+    const result = await rpc('ssh.exec', { connectionId, command: 'echo $HOME' }, signal)
+    if (!result.ok) return null
+    const value = result.value as { exitCode?: number | null; stdout?: string } | undefined
+    if (value === undefined || value.exitCode !== 0) return null
+    const home = (value.stdout ?? '').trim()
+    return home.startsWith('/') ? home : null
+  } catch (error) {
+    if (signal?.aborted) return null
+    console.error('[SshPanel] resolveHomeDir failed:', error)
+    return null
+  }
+}
+
+/** PTY event payloads are supplied by the shared Remote event stream. */
+/** Strip ANSI escape sequences (colors, cursor moves, etc.) from terminal output. */
+function stripAnsi(text: string): string {
+  let result = text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+  result = result.replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, '')
+  result = result.replace(/\x1b./g, '')
+  return result
+}
+
+/**
+ * Extract the working directory from the last shell prompt in a chunk of
+ * terminal output. Handles common PS1 formats:
+ *   - [user@host ~]#            (RHEL/CentOS, bracketed)
+ *   - user@host:cwd$ / user@host:cwd# (bash \u@\h:\w\$)
+ *   - cwd$                      (minimal prompt)
+ *   - ~/path$                   (tilde-relative, expanded with `homeDir`)
+ * `homeDir` is the remote home used to expand `~`; it is passed by the caller
+ * (from `ssh.exec echo $HOME`) so a non-root user resolves to its real home.
+ * Returns the absolute path or null when no prompt is found.
+ */
+function extractCwdFromPrompt(raw: string, homeDir: string): string | null {
+  const clean = stripAnsi(raw).replace(/\r/g, '')
+  const lines = clean.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = (lines[i] ?? '').trimEnd()
+    if (line === '') continue
+    // RHEL/CentOS bracketed prompt: [user@host dir]#
+    const bracket = line.match(/^\[((?:[\w.-]+@[\w.-]+)?\s*)([^\]]+)\]\s*[$#]\s*$/)
+    // bash \u@\h:\w\$ and minimal dir$ prompts.
+    const plain = line.match(/^(?:[\w.-]+@[\w.-]+:)?(\S+)\s*[$#]\s*$/)
+    let cwd: string | null = null
+    if (bracket !== null) cwd = (bracket[2] ?? '').trim()
+    else if (plain !== null) cwd = (plain[1] ?? '').trim()
+    if (cwd === null || cwd === '') continue
+    if (cwd === '~' || cwd === '~/') cwd = homeDir
+    else if (cwd.startsWith('~/')) cwd = homeDir + cwd.slice(1)
+    if (!cwd.startsWith('/')) continue
+    return cwd
+  }
+  return null
+}
+
+/** Hook marker emitted by the injected PROMPT_COMMAND before each prompt. */
+const CWD_HOOK_PREFIX = '__DSH_CWD__'
+
+/**
+ * Parse the cwd from a PROMPT_COMMAND hook line. The hook prints
+ * `__DSH_CWD__<path>` on its own line before each prompt; this parser extracts
+ * the path that follows the prefix. More reliable than parsing the prompt
+ * itself, which varies across shells and PS1 configurations.
+ */
+function extractCwdFromHook(chunk: string): string | null {
+  const clean = stripAnsi(chunk).replace(/\r/g, '')
+  // Use the last occurrence (the buffer holds recent scrollback, so an older
+  // marker from an earlier cd could otherwise shadow the current one).
+  const start = clean.lastIndexOf(CWD_HOOK_PREFIX)
+  if (start === -1) return null
+  const afterStart = start + CWD_HOOK_PREFIX.length
+  // The hook prints the path immediately after the prefix, up to the line end.
+  const end = clean.indexOf('\n', afterStart)
+  const raw = (end === -1 ? clean.slice(afterStart) : clean.slice(afterStart, end)).trim()
+  return raw.startsWith('/') ? raw : null
+}
+
+/** Streaming prompt tracker: accumulates PTY output and reports cwd changes. */
+function createPromptTracker(onCwd: (cwd: string) => void, homeDir: string): { feed: (chunk: string) => void; reset: () => void } {
+  let buffer = ''
+  let lastCwd: string | null = null
+  return {
+    feed(chunk: string) {
+      buffer += chunk
+      if (buffer.length > 8192) buffer = buffer.slice(-8192)
+      // Prefer the PROMPT_COMMAND hook marker — reliable across PS1 variants.
+      const cwd = extractCwdFromHook(buffer) ?? extractCwdFromPrompt(buffer, homeDir)
+      if (cwd !== null && cwd !== lastCwd) {
+        lastCwd = cwd
+        onCwd(cwd)
+      }
+    },
+    reset() {
+      buffer = ''
+      lastCwd = null
+    },
+  }
+}
+
+/** Marker sequence emitted by the cwd probe command. */
+const CWD_PROBE_START = '__DSH_CWD_START__'
+const CWD_PROBE_END = '__DSH_CWD_END__'
+
+/**
+ * Parse the cwd out of a probe response. The probe writes a command that
+ * prints `<start>$(pwd)<end>`; this parser extracts the path between the
+ * markers regardless of the surrounding terminal output (echoed command,
+ * prompt, etc.).
+ */
+function extractCwdFromProbe(chunk: string): string | null {
+  const start = chunk.indexOf(CWD_PROBE_START)
+  if (start === -1) return null
+  const afterStart = start + CWD_PROBE_START.length
+  const end = chunk.indexOf(CWD_PROBE_END, afterStart)
+  if (end === -1) return null
+  const cwd = chunk.slice(afterStart, end).trim()
+  return cwd.startsWith('/') ? cwd : null
+}
+
+/**
+ * Render the SSH/SFTP panel as a conversation view tab.
+ */
+export function SshPanel({ t, rpc, subscribeHostFrames }: SshPanelProps) {
+  const [connections, setConnections] = useState<SshConnectionView[]>([])
+  const [selectedConn, setSelectedConn] = useState<string | null>(null)
+  const [terminalEl, setTerminalEl] = useState<HTMLElement | null>(null)
+  const [sftpPath, setSftpPath] = useState('/')
+  const [sftpEntries, setSftpEntries] = useState<SftpEntryView[]>([])
+  const [sftpLoading, setSftpLoading] = useState(false)
+  const [sftpError, setSftpError] = useState<string | null>(null)
+  const [ptyError, setPtyError] = useState<string | null>(null)
+  const [ptyOpen, setPtyOpen] = useState(false)
+  const [ptyStarting, setPtyStarting] = useState(false)
+  const [followCwd, setFollowCwd] = useState(true)
+  const [homeDir, setHomeDir] = useState('/root')
+  const [downloading, setDownloading] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [busyAction, setBusyAction] = useState<number | null>(null)
+  const [connectionsLoaded, setConnectionsLoaded] = useState(false)
+  const [filterText, setFilterText] = useState('')
+  const [mkdirOpen, setMkdirOpen] = useState(false)
+  const [mkdirName, setMkdirName] = useState('')
+  const [renameTarget, setRenameTarget] = useState<SftpEntryView | null>(null)
+  const [renameName, setRenameName] = useState('')
+  const [confirmRemovePath, setConfirmRemovePath] = useState<string | null>(null)
+  const [detailEntry, setDetailEntry] = useState<SftpEntryView | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+
+  const termRef = useRef<Terminal | null>(null)
+  const fitRef = useRef<FitAddon | null>(null)
+  const ptyIdRef = useRef<string | null>(null)
+  // Read by `listDir`, whose identity must not change with the terminal state.
+  const ptyOpenRef = useRef(ptyOpen)
+  ptyOpenRef.current = ptyOpen
+  const pendingPtyOutputRef = useRef<Uint8Array[]>([])
+  const resizeObserver = useRef<ResizeObserver | null>(null)
+  const hostUnsubRef = useRef<(() => void) | null>(null)
+  const followCwdRef = useRef(followCwd)
+  followCwdRef.current = followCwd
+  const promptTrackerRef = useRef<{ feed: (chunk: string) => void; reset: () => void } | null>(null)
+  const cwdProbeRef = useRef<{ buffer: string; onResult: (cwd: string | null) => void } | null>(null)
+  const ptyWriteRef = useRef<((text: string) => void) | null>(null)
+  const sftpPathRef = useRef(sftpPath)
+  sftpPathRef.current = sftpPath
+  // Monotonic token so a stale `listDir` response cannot clobber a newer
+  // one (e.g. the post-upload refresh racing a follow-cwd refresh).
+  const listSeqRef = useRef(0)
+
+  // Load connections on mount.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const result = await rpc('ssh.list', {})
+        if (result.ok) {
+          const value = result.value as { connections: SshConnectionView[] } | undefined
+          setConnections(value?.connections ?? [])
+        }
+      } catch { /* connection list is optional */ }
+      finally { setConnectionsLoaded(true) }
+    })()
+  }, [])
+
+  const teardownTerminal = useCallback((closeRemote: boolean): void => {
+    const ptyId = ptyIdRef.current
+    ptyIdRef.current = null
+    if (closeRemote && ptyId !== null) void rpc('ssh.pty.close', { ptyId }).catch(() => undefined)
+    promptTrackerRef.current = null
+    cwdProbeRef.current = null
+    resizeObserver.current?.disconnect()
+    resizeObserver.current = null
+    termRef.current?.dispose()
+    termRef.current = null
+    setPtyOpen(false)
+    // The SFTP browser read through this terminal's connection, so it holds no
+    // remote directory any more: drop the listing instead of showing a stale
+    // one the next click could not refresh.
+    setSftpEntries([])
+    setSftpError(null)
+    setSftpLoading(false)
+  }, [rpc])
+
+  // Subscribe to host WebSocket frames for PTY output/exit.
+  useEffect(() => {
+    const unsub = subscribeHostFrames(
+      (frame) => {
+        if (frame.ptyId !== ptyIdRef.current) return
+        if (frame.data === undefined) return
+        const bytes = atob(frame.data)
+        const bytesArr = new Uint8Array(bytes.length)
+        for (let i = 0; i < bytes.length; i++) bytesArr[i] = bytes.charCodeAt(i)
+        const term = termRef.current
+        if (term === null) pendingPtyOutputRef.current.push(bytesArr)
+        else term.write(bytesArr)
+        const text = new TextDecoder().decode(bytesArr)
+        // Feed the prompt tracker so the SFTP path can follow terminal cd.
+        promptTrackerRef.current?.feed(text)
+        // Feed any in-flight cwd probe so it can parse the marker response.
+        const probe = cwdProbeRef.current
+        if (probe !== null) {
+          probe.buffer += text
+          const cwd = extractCwdFromProbe(probe.buffer)
+          if (cwd !== null) {
+            probe.onResult(cwd)
+            cwdProbeRef.current = null
+          }
+        }
+      },
+      (ptyId) => {
+        if (ptyId !== ptyIdRef.current) return
+        teardownTerminal(false)
+      },
+    )
+    hostUnsubRef.current = unsub
+    return () => { unsub(); hostUnsubRef.current = null }
+  }, [teardownTerminal])
+
+  // SFTP: list directory. The read rides the connection the terminal opened,
+  // so a request without a live terminal never connects to the target.
+  const listDir = useCallback(async (path: string) => {
+    if (!selectedConn || !ptyOpenRef.current) return
+    const seq = ++listSeqRef.current
+    setSftpLoading(true)
+    setSftpError(null)
+    try {
+      const result = await rpc('ssh.sftp.list', {
+        connectionId: selectedConn, path,
+      })
+      // Ignore this response if a newer list call arrived while we awaited.
+      if (seq !== listSeqRef.current) return
+      if (result.ok) {
+        const value = result.value as { entries: SftpEntryView[] } | undefined
+        setSftpEntries(value?.entries ?? [])
+        setSftpPath(path)
+      } else {
+        const msg = result.error?.message ?? 'failed to list directory'
+        console.error('[SshPanel] sftp list failed:', path, msg)
+        setSftpError(msg)
+      }
+    } catch (error) {
+      if (seq !== listSeqRef.current) return
+      const msg = error instanceof Error ? error.message : String(error)
+      console.error('[SshPanel] sftp list exception:', path, msg)
+      setSftpError(msg)
+    } finally {
+      // Only the newest caller clears the spinner; an older one must not.
+      if (seq === listSeqRef.current) setSftpLoading(false)
+    }
+  }, [selectedConn])
+
+  // Latest listDir for the cwd probe callback (avoids stale selectedConn).
+  const listDirRef = useRef(listDir)
+  listDirRef.current = listDir
+
+  /**
+   * Write a cwd-probe command to the PTY and resolve the current working
+   * directory from a marked response. Falls back to prompt parsing when the
+   * probe times out or the terminal is not open.
+   */
+  const probeCwd = useCallback((onDone?: (cwd: string | null) => void) => {
+    const ptyId = ptyIdRef.current
+    if (ptyId === null) {
+      onDone?.(null)
+      return
+    }
+    const write = ptyWriteRef.current
+    if (write === null) {
+      onDone?.(null)
+      return
+    }
+    cwdProbeRef.current = {
+      buffer: '',
+      onResult: (cwd) => {
+        if (cwd === null) {
+          onDone?.(null)
+          return
+        }
+        if (followCwdRef.current) {
+          const current = sftpPathRef.current
+          if (cwd !== current) {
+            setSftpPath(cwd)
+            void listDirRef.current(cwd)
+          }
+        }
+        onDone?.(cwd)
+      },
+    }
+    // The probe survives in the PTY history; reset it on the next open.
+    const cmd = `printf '\\n${CWD_PROBE_START}'; pwd; printf '${CWD_PROBE_END}\\n'`
+    write(`${cmd}\r`)
+    // Fall back to prompt parsing if the probe does not answer quickly.
+    window.setTimeout(() => {
+      if (cwdProbeRef.current?.buffer.includes(CWD_PROBE_END)) return
+      cwdProbeRef.current = null
+      onDone?.(null)
+    }, 1500)
+  }, [])
+
+  /**
+   * Inject a PROMPT_COMMAND hook (bash) so each new prompt emits a
+   * `__DSH_CWD__<path>` marker before it. The SFTP follow then reads the
+   * marker instead of guessing from the prompt text, which is far more
+   * reliable. Idempotent: guarded by `__DSH_HOOKED` so re-opening or a
+   * nested shell does not re-wrap PROMPT_COMMAND.
+   */
+  const injectCwdHook = useCallback(() => {
+    const write = ptyWriteRef.current
+    if (write === null) return
+    // Remember the user's original PROMPT_COMMAND once, then prepend our
+    // marker emission. Using a saved copy avoids self-reference (a
+    // \${PROMPT_COMMAND:-} inside PROMPT_COMMAND re-expands itself and
+    // floods the terminal). The marker prints __DSH_CWD__<pwd> before each
+    // prompt so the SFTP follow reads a reliable cwd.
+    const cmd = 'if [ -z "$__DSH_HOOKED_BEFORE" ]; then export __DSH_HOOKED_BEFORE=1; export __DSH_ORIG_PC="$PROMPT_COMMAND"; fi; export PROMPT_COMMAND="echo -n \'__DSH_CWD__\'; pwd;${__DSH_ORIG_PC}"'
+    write(`${cmd}\r`)
+  }, [])
+
+  // Selecting a target only arms the panel: the connection belongs to the
+  // terminal, so switching targets drops the terminal that held it and the
+  // directory it was showing, and nothing connects until a terminal opens.
+  useEffect(() => {
+    setSftpEntries([])
+    setSftpError(null)
+    setSftpPath('/')
+    setFollowCwd(true)
+  }, [selectedConn])
+
+  // The SFTP browser reads through the terminal's connection: load the remote
+  // home directory once a terminal is open, preferring it over '/'.
+  useEffect(() => {
+    if (!ptyOpen || selectedConn === null) return
+    const ac = new AbortController()
+    void (async () => {
+      const home = await resolveHomeDir(rpc, selectedConn, ac.signal)
+      if (ac.signal.aborted) return
+      if (home !== null) setHomeDir(home)
+      const initial = home ?? '/'
+      setSftpPath(initial)
+      await listDirRef.current(initial)
+    })()
+    return () => { ac.abort() }
+  }, [ptyOpen, selectedConn, rpc])
+
+  // Open a PTY session on the selected connection. The xterm view is
+  // mounted by a separate effect once `terminalEl` + `ptyOpen` are ready.
+  const openPty = useCallback(async () => {
+    if (!selectedConn) return
+    setPtyError(null)
+    setPtyStarting(true)
+    try {
+      const result = await rpc('ssh.pty.open', {
+        connectionId: selectedConn, cols: 80, rows: 24,
+      })
+      if (!result.ok) {
+        setPtyError(result.error?.message ?? 'failed to open PTY')
+        return
+      }
+      const ptyId = (result.value as { ptyId: string } | undefined)?.ptyId ?? ''
+      if (ptyId === '') {
+        setPtyError('host returned no PTY id')
+        return
+      }
+      pendingPtyOutputRef.current = []
+      ptyIdRef.current = ptyId
+      const attached = await rpc('ssh.pty.attach', { ptyId })
+      if (!attached.ok) {
+        await rpc('ssh.pty.close', { ptyId }).catch(() => undefined)
+        ptyIdRef.current = null
+        setPtyError(attached.error?.message ?? 'failed to attach PTY')
+        return
+      }
+      promptTrackerRef.current?.reset()
+      setPtyOpen(true)
+    } catch (error) {
+      setPtyError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setPtyStarting(false)
+    }
+  }, [selectedConn, rpc])
+
+  // Mount xterm once the PTY is open and the terminal container is ready.
+  useEffect(() => {
+    if (!ptyOpen || terminalEl === null || termRef.current !== null) return
+    const ptyId = ptyIdRef.current
+    if (ptyId === null) return
+
+    const term = new Terminal({
+      cursorBlink: true,
+      fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace",
+      fontSize: 14,
+      theme: resolveTheme(),
+      convertEol: false,
+    })
+    const fit = new FitAddon()
+    term.loadAddon(fit)
+    term.open(terminalEl)
+    fit.fit()
+    termRef.current = term
+    fitRef.current = fit
+    for (const chunk of pendingPtyOutputRef.current.splice(0)) term.write(chunk)
+
+    term.onData((data: string) => {
+      const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(data)))
+      void rpc('ssh.pty.write', { ptyId, data: b64 })
+    })
+    // Programmatic PTY write for the cwd probe (user keystrokes go via onData).
+    ptyWriteRef.current = (text: string) => {
+      const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(text)))
+      void rpc('ssh.pty.write', { ptyId, data: b64 })
+    }
+
+    // Fit + resize only when the container actually changes size, avoiding
+    // the runaway feedback of a fixed-interval fit loop.
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(() => {
+        fit.fit()
+        void rpc('ssh.pty.resize', { ptyId, cols: term.cols, rows: term.rows })
+      })
+      observer.observe(terminalEl)
+      resizeObserver.current = observer
+    }
+
+    term.focus()
+
+    // Seed a prompt tracker that follows the terminal working directory,
+    // but only when the user keeps the follow switch on.
+    promptTrackerRef.current = createPromptTracker((cwd) => {
+      if (!followCwdRef.current) return
+      const current = sftpPathRef.current
+      if (cwd === current) return
+      setSftpPath(cwd)
+      void listDir(cwd)
+    }, homeDir)
+
+    // Inject the PROMPT_COMMAND hook so each prompt emits a cwd marker the
+    // tracker can read reliably (independent of the PS1 format).
+    const hookTimer = window.setTimeout(() => { injectCwdHook() }, 300)
+
+    // Wait for the shell to settle, then probe the exact cwd so the SFTP view
+    // lands where the terminal actually is (prompt parsing is best-effort).
+    const initialProbe = window.setTimeout(() => { probeCwd() }, 600)
+
+    return () => {
+      window.clearTimeout(initialProbe)
+      window.clearTimeout(hookTimer)
+      resizeObserver.current?.disconnect()
+      resizeObserver.current = null
+      term.dispose()
+      termRef.current = null
+      promptTrackerRef.current = null
+      ptyWriteRef.current = null
+      cwdProbeRef.current = null
+    }
+  }, [ptyOpen, terminalEl, listDir, homeDir, probeCwd, injectCwdHook])
+
+  // Repaint the xterm palette when the DSH color mode flips while the terminal
+  // is open. The terminal is created with the current mode's theme; this
+  // observer only fires on a live mode change, so a closed terminal (termRef
+  // null) or an untouched body, including the jsdom test fixture, is skipped.
+  useEffect(() => {
+    const apply = (): void => {
+      const term = termRef.current
+      if (term === null) return
+      term.options.theme = resolveTheme()
+    }
+    const observer = new MutationObserver(apply)
+    observer.observe(document.body, { attributes: true, attributeFilter: [DARK_ATTRIBUTE] })
+    return () => { observer.disconnect() }
+  }, [])
+
+  // Clean up the PTY on unmount.
+  useEffect(() => {
+    return () => {
+      resizeObserver.current?.disconnect()
+      resizeObserver.current = null
+      if (ptyIdRef.current) {
+        void rpc('ssh.pty.close', { ptyId: ptyIdRef.current }).catch(() => undefined)
+      }
+      termRef.current?.dispose()
+      termRef.current = null
+      ptyIdRef.current = null
+      pendingPtyOutputRef.current = []
+    }
+  }, [rpc])
+
+  // SFTP: navigate into a directory (manual navigation pauses cwd follow).
+  const navigateDir = useCallback((entry: SftpEntryView) => {
+    if (entry.type !== 'directory') return
+    setFollowCwd(false)
+    void listDir(entry.path)
+  }, [listDir])
+
+  // SFTP: go to parent directory (manual navigation pauses cwd follow).
+  const goParent = useCallback(() => {
+    setFollowCwd(false)
+    void listDir(parentOf(sftpPath))
+  }, [sftpPath, listDir])
+
+  // SFTP: download a file via the host-only GET channel.
+  const downloadFile = useCallback(async (entry: SftpEntryView) => {
+    if (!selectedConn) return
+    setDownloading(entry.name)
+    try {
+      const url = `api/ssh/sftp/download?connectionId=${encodeURIComponent(selectedConn)}&path=${encodeURIComponent(entry.path)}`
+      const response = await fetch(url)
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(t('ssh.downloadFailed', { status: String(response.status), error: text }))
+      }
+      const blob = await response.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = entry.name
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(a.href)
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      setSftpError(msg)
+      console.error('[SshPanel] sftp download failed:', entry.path, msg)
+    } finally {
+      setDownloading(null)
+    }
+  }, [selectedConn, t])
+
+  // SFTP: upload via file input (carrier POST, raw file body).
+  const handleUploadClick = useCallback(() => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.multiple = true
+    input.onchange = async () => {
+      const files = Array.from(input.files ?? [])
+      if (files.length === 0 || !selectedConn) return
+      setUploading(true)
+      setSftpError(null)
+      // Use the live path ref so a concurrent cwd follow does not send the
+      // file (or the post-upload refresh) to a stale directory.
+      const currentDir = sftpPathRef.current
+      const failures: string[] = []
+      try {
+        for (const file of files) {
+          const targetPath = joinPath(currentDir, file.name)
+          const response = await fetch(
+            `api/ssh/sftp/upload?connectionId=${encodeURIComponent(selectedConn)}&path=${encodeURIComponent(targetPath)}`,
+            { method: 'POST', body: file },
+          )
+          if (!response.ok) {
+            const text = await response.text()
+            failures.push(`${file.name} (${response.status}): ${text}`)
+          }
+        }
+        if (failures.length > 0) {
+          throw new Error(failures.join('; '))
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error)
+        setSftpError(msg)
+        console.error('[SshPanel] sftp upload failed:', currentDir, msg)
+      } finally {
+        // Refresh in every case: a failed status may still have written part
+        // of the file, and a stale directory hides a successful upload.
+        await listDir(currentDir)
+        setUploading(false)
+      }
+    }
+    input.click()
+  }, [selectedConn, listDir])
+
+  // SFTP: mkdir — open an inline dialog; the actual call runs in submitMkdir.
+  const handleMkdir = useCallback(() => {
+    setMkdirName('')
+    setMkdirOpen(true)
+  }, [])
+
+  const submitMkdir = useCallback(() => {
+    const name = mkdirName.trim()
+    if (name === '' || !selectedConn) return
+    const path = joinPath(sftpPath, name)
+    setMkdirOpen(false)
+    setMkdirName('')
+    void (async () => {
+      setSftpError(null)
+      try {
+        // The panel accepts multi-segment names like `a/b/c`; the remote end
+        // creates missing parents when `recursive` is set.
+        const result = await rpc('ssh.sftp.mkdir', { connectionId: selectedConn, path, recursive: true })
+        if (result.ok) { void listDir(sftpPath) }
+        else { setSftpError(result.error?.message ?? t('ssh.mkdirFailed', { error: '' })) }
+      } catch (error) {
+        setSftpError(error instanceof Error ? error.message : String(error))
+      }
+    })()
+  }, [mkdirName, selectedConn, sftpPath, listDir, t])
+
+  // SFTP: remove (recursive for directories). The actual deletion runs here;
+  // handleRemoveClick gates it behind a two-step confirm.
+  const removeEntry = useCallback(async (entry: SftpEntryView) => {
+    if (!selectedConn) return
+    setBusyAction(nextActionId())
+    setSftpError(null)
+    const recursive = entry.type === 'directory'
+    try {
+      const result = await rpc('ssh.sftp.remove', {
+        connectionId: selectedConn, path: entry.path, recursive,
+      })
+      if (result.ok) { void listDir(sftpPath) }
+      else { setSftpError(result.error?.message ?? t('ssh.removeFailed', { error: entry.name })) }
+    } catch (error) {
+      setSftpError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusyAction(null)
+    }
+  }, [selectedConn, sftpPath, listDir, t])
+
+  // Two-step delete: the first click arms the confirm state for that row; a
+  // second click on the same row runs the removal. Any other interaction
+  // (a different row, navigation, or opening a dialog) clears the armed row.
+  const handleRemoveClick = useCallback((entry: SftpEntryView) => {
+    if (confirmRemovePath === entry.path) {
+      setConfirmRemovePath(null)
+      void removeEntry(entry)
+    } else {
+      setConfirmRemovePath(entry.path)
+    }
+  }, [confirmRemovePath, removeEntry])
+
+  // SFTP: rename — open an inline dialog seeded with the current name.
+  const renameEntry = useCallback((entry: SftpEntryView) => {
+    setRenameTarget(entry)
+    setRenameName(entry.name)
+  }, [])
+
+  const submitRename = useCallback(() => {
+    const target = renameTarget
+    const newName = renameName.trim()
+    if (target === null || newName === '' || newName === target.name || !selectedConn) return
+    const toPath = joinPath(parentOf(target.path), newName)
+    setRenameTarget(null)
+    setRenameName('')
+    setSftpError(null)
+    void (async () => {
+      try {
+        const result = await rpc('ssh.sftp.rename', {
+          connectionId: selectedConn, path: target.path, toPath,
+        })
+        if (result.ok) { void listDir(sftpPath) }
+        else { setSftpError(result.error?.message ?? t('ssh.renameFailed', { error: target.name })) }
+      } catch (error) {
+        setSftpError(error instanceof Error ? error.message : String(error))
+      }
+    })()
+  }, [renameTarget, renameName, selectedConn, sftpPath, listDir, t])
+
+  // SFTP: fetch fresh metadata for one entry via the sftpStat Remote and show
+  // it in an inline detail card. The list entry is shown immediately and
+  // refined once the stat round-trip resolves.
+  const showDetail = useCallback(async (entry: SftpEntryView) => {
+    if (!selectedConn) return
+    setDetailEntry(entry)
+    setDetailLoading(true)
+    try {
+      const result = await rpc('ssh.sftp.stat', { connectionId: selectedConn, path: entry.path })
+      if (result.ok) {
+        const value = result.value as { entry: SftpEntryView } | undefined
+        if (value?.entry !== undefined) setDetailEntry(value.entry)
+      }
+    } catch {
+      // Keep the list entry's metadata on a stat failure.
+    } finally {
+      setDetailLoading(false)
+    }
+  }, [selectedConn, rpc])
+
+  return (
+    <div className={css.view} data-ui-polish-ssh="">
+      <div className={css.header}>
+        <span className={css.title}>{t('ssh.title')}</span>
+        <select
+          className={css.select}
+          value={selectedConn ?? ''}
+          onChange={(e) => {
+            // One connection at a time: the next target's SFTP browser needs a
+            // terminal of its own, so the previous terminal is closed here.
+            if (ptyOpenRef.current) teardownTerminal(true)
+            setSelectedConn(e.target.value || null)
+          }}
+          disabled={!connectionsLoaded || connections.length === 0}
+        >
+          <option value="">
+            {connectionsLoaded && connections.length === 0
+              ? t('ssh.noConnections')
+              : t('ssh.selectConnection')}
+          </option>
+          {connections.map(conn => (
+            <option key={conn.id} value={conn.id}>
+              {conn.name} ({conn.host}:{conn.port})
+            </option>
+          ))}
+        </select>
+        {selectedConn && (
+          <button className={css.button} disabled={ptyStarting} onClick={() => void openPty()}>
+            {ptyStarting ? t('ssh.opening') : t('ssh.openTerminal')}
+          </button>
+        )}
+      </div>
+
+      {ptyError && <div className={css.error}>{ptyError}</div>}
+
+      {/* PTY terminal — always mounted so xterm gets a measurable size. */}
+      <div className={css.terminal}>
+        <div ref={(el) => { if (el) setTerminalEl(el) }} className={css.terminalInner} />
+        {ptyOpen && termRef.current && (
+          <button
+            className={css.closeButton}
+            onClick={() => { teardownTerminal(true) }}
+          >
+            {t('ssh.closeTerminal')}
+          </button>
+        )}
+      </div>
+
+      {/* SFTP file manager */}
+      <div className={css.sftp}>
+        <div className={css.sftpHeader}>
+          <button className={css.button} disabled={!ptyOpen || sftpPath === '/'} onClick={goParent} style={{ marginRight: 8 }}>
+            ..
+          </button>
+          <div className={css.crumbs}>
+            {pathSegments(sftpPath).map((seg, idx) => (
+              <span key={seg.prefix}>
+                {idx > 0 && <span className={css.crumbSep}>/</span>}
+                <button
+                  className={`${css.crumb}${idx === pathSegments(sftpPath).length - 1 ? ` ${css.crumbCurrent}` : ''}`}
+                  disabled={!ptyOpen || idx === pathSegments(sftpPath).length - 1}
+                  onClick={() => { setFollowCwd(false); void listDir(seg.prefix) }}
+                >
+                  {seg.label}
+                </button>
+              </span>
+            ))}
+          </div>
+          <div className={css.sftpActions}>
+            <input
+              className={css.filter}
+              type="search"
+              value={filterText}
+              placeholder={t('ssh.filter')}
+              onChange={(e) => { setFilterText(e.target.value) }}
+            />
+            <button
+              className={`${css.button}${followCwd ? ` ${css.active}` : ''}`}
+              disabled={!selectedConn || !ptyOpen}
+              title={t('ssh.followCwd')}
+              onClick={() => {
+                const next = !followCwd
+                setFollowCwd(next)
+                if (next) probeCwd()
+              }}
+            >
+              {t('ssh.followCwd')}
+            </button>
+            <button
+              className={css.button}
+              disabled={!ptyOpen || sftpLoading}
+              onClick={() => { setFollowCwd(false); void listDir(sftpPath) }}
+            >
+              {t('ssh.refresh')}
+            </button>
+            <button className={css.button} disabled={!ptyOpen} onClick={handleMkdir}>
+              {t('ssh.mkdir')}
+            </button>
+            <button className={css.button} disabled={!ptyOpen || uploading} onClick={handleUploadClick}>
+              {uploading ? t('ssh.uploading') : t('ssh.upload')}
+            </button>
+          </div>
+        </div>
+        {mkdirOpen && (
+          <form
+            className={css.dialog}
+            onSubmit={(e) => { e.preventDefault(); submitMkdir() }}
+          >
+            <input
+              className={css.dialogInput}
+              autoFocus
+              value={mkdirName}
+              placeholder={t('ssh.mkdirPrompt')}
+              onChange={(e) => { setMkdirName(e.target.value) }}
+            />
+            <button type="submit" className={css.button}>{t('ssh.confirm')}</button>
+            <button
+              type="button"
+              className={css.button}
+              onClick={() => { setMkdirOpen(false); setMkdirName('') }}
+            >
+              {t('ssh.cancel')}
+            </button>
+          </form>
+        )}
+        {renameTarget !== null && (
+          <form
+            className={css.dialog}
+            onSubmit={(e) => { e.preventDefault(); submitRename() }}
+          >
+            <input
+              className={css.dialogInput}
+              autoFocus
+              value={renameName}
+              placeholder={t('ssh.renamePrompt')}
+              onChange={(e) => { setRenameName(e.target.value) }}
+            />
+            <button type="submit" className={css.button}>{t('ssh.confirm')}</button>
+            <button
+              type="button"
+              className={css.button}
+              onClick={() => { setRenameTarget(null); setRenameName('') }}
+            >
+              {t('ssh.cancel')}
+            </button>
+          </form>
+        )}
+        {detailEntry !== null && (
+          <div className={css.detailCard}>
+            <div className={css.detailHeader}>
+              <span className={css.detailTitle}>{t('ssh.detailTitle')}</span>
+              <button className={css.actionBtn} onClick={() => { setDetailEntry(null) }}>
+                {t('ssh.detailClose')}
+              </button>
+            </div>
+            <div className={css.detailRow}><span>{t('ssh.name')}</span><span>{detailEntry.name}</span></div>
+            <div className={css.detailRow}><span>{t('ssh.type')}</span><span>{detailEntry.type}</span></div>
+            <div className={css.detailRow}><span>{t('ssh.size')}</span><span>{detailEntry.type === 'file' ? formatSize(detailEntry.size) : '—'}</span></div>
+            <div className={css.detailRow}><span>{t('ssh.modified')}</span><span>{new Date(detailEntry.mtime).toLocaleString()}</span></div>
+            <div className={css.detailRow}><span>{t('ssh.detailPath')}</span><span>{detailEntry.path}</span></div>
+            {detailLoading && <div className={css.loading}>{t('ssh.loading')}</div>}
+          </div>
+        )}
+        {sftpError && <div className={css.error}>{sftpError}</div>}
+        {!ptyOpen && <div className={css.hint}>{t('ssh.needsTerminal')}</div>}
+        {ptyOpen && sftpLoading && <div className={css.loading}>{t('ssh.loading')}</div>}
+        {ptyOpen && !sftpLoading && (
+          <table className={css.table}>
+            <thead>
+              <tr>
+                <th>{t('ssh.name')}</th>
+                <th>{t('ssh.type')}</th>
+                <th>{t('ssh.size')}</th>
+                <th>{t('ssh.modified')}</th>
+                <th>{t('ssh.actions')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                const needle = filterText.trim().toLowerCase()
+                const visible = needle === '' ? sftpEntries : sftpEntries.filter(e => e.name.toLowerCase().includes(needle))
+                if (visible.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan={5} style={{ textAlign: 'center', opacity: 0.5 }}>
+                        {selectedConn ? t('ssh.empty') : t('ssh.selectConnection')}
+                      </td>
+                    </tr>
+                  )
+                }
+                return visible.map(entry => (
+                  <tr key={entry.path} onClick={() => { navigateDir(entry) }} className={entry.type === 'directory' ? css.dirRow : undefined}>
+                    <td>{entry.name}</td>
+                    <td>{entry.type}</td>
+                    <td>{entry.type === 'file' ? formatSize(entry.size) : '—'}</td>
+                    <td>{new Date(entry.mtime).toLocaleString()}</td>
+                    <td className={css.rowActions} onClick={(e) => { e.stopPropagation() }}>
+                      {entry.type === 'file' && (
+                        <button
+                          className={css.actionBtn}
+                          disabled={downloading === entry.name}
+                          onClick={() => { void downloadFile(entry) }}
+                        >
+                          {downloading === entry.name ? t('ssh.downloading') : t('ssh.download')}
+                        </button>
+                      )}
+                      <button className={css.actionBtn} disabled={busyAction !== null} onClick={() => { renameEntry(entry) }}>
+                        {t('ssh.rename')}
+                      </button>
+                      <button
+                        className={`${css.actionBtn}${confirmRemovePath === entry.path ? ` ${css.danger}` : ''}`}
+                        disabled={busyAction !== null}
+                        onClick={() => { handleRemoveClick(entry) }}
+                      >
+                        {confirmRemovePath === entry.path ? t('ssh.confirmRemove') : t('ssh.remove')}
+                      </button>
+                      <button className={css.actionBtn} disabled={busyAction !== null} onClick={() => { void showDetail(entry) }}>
+                        {t('ssh.details')}
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              })()}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Monotonic counter for per-row busy state labels (no React state identity needs).
+let actionCounter = 0
+function nextActionId(): number {
+  actionCounter += 1
+  return actionCounter
+}
+
+/** Format a byte count for display. */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}

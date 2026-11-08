@@ -1,0 +1,45 @@
+{
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "declaration": true,
+    "sourceMap": true,
+    "declarationMap": true,
+    "resolveJsonModule": true,
+    "composite": false,
+    "incremental": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "lib": [
+      "ES2024"
+    ],
+    "types": [
+      "node"
+    ],
+    "rootDir": "src",
+    "outDir": "lib/types"
+  },
+  "include": [
+    "src/background-service.ts",
+    "src/background-settings.ts",
+    "src/css-modules.d.ts",
+    "src/excalidraw-service.ts",
+    "src/git-llm.ts",
+    "src/git-service.ts",
+    "src/index.ts",
+    "src/latex-service.ts",
+    "src/llm-route.ts",
+    "src/ssh-events-protocol.ts",
+    "src/ssh-events-service.ts"
+  ]
+}

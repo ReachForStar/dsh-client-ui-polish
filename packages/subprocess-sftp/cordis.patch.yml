@@ -1,0 +1,5 @@
+# Remote `ctx.subprocess` provider over SSH. Disable the local subprocess
+# provider in the same profile.
+insert:
+  - id: subprocess-sftp
+    name: '@reachforstar/dsh-subprocess-sftp'

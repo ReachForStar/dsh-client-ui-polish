@@ -1,12 +1,73 @@
+---
+description: "配置 Pi 子代理提供方，通过 Pi RPC 协议执行一次性委托编码任务。"
+kind: "package-reference"
+---
+
 # @reachforstar/dsh-subagent-pi
 
 [English](README.md) | 中文
 
-本包注册固定的 `pi` 子代理提供方。每个被接受的 run 都会在委托方 Session 的工作目录中启动 [Pi 编码 Agent](https://github.com/earendil-works/pi)（`@earendil-works/pi-coding-agent`）的 RPC 模式，通过 Pi 的逐行 JSON stdio 协议提交一个自包含的文本任务，并仅通过共享的 `@deepseek-ai/dsh-subagent` 结果契约返回最终答案。
+## 概述
+
+本包把一个自包含的文本任务委托给 Pi 编码 Agent 进程，只返回最终答案，子进程工作区使用父 Session cwd，并在完成或取消时清理进程树。
+
+## 目录
+
+- [使用本包](#use-this-package)
+- [理解实现](#understand-the-implementation)
+- [进一步探索](#further-exploration)
+- [模型体验](#model-experience)
+- [已知局限与后续工作](#known-limitations-and-deferred-work)
+- [开发备注](#dev-note)
+
+-----
+
+<a id="use-this-package"></a>
+## 使用本包
+
+需要委托 Pi 编码任务时，在 Host 组合中挂载本提供方及其工具消费方。
+
+### 何时选择
+
+Pi 已安装并独立配置时选择本提供方。子进程必须继承父上下文或使用不同生命周期时，选择原生进程内或 ACP 子代理提供方。
+
+### 最小配置
+
+```yaml
+- id: subagent-pi
+  name: '@reachforstar/dsh-subagent-pi'
+```
+
+本提供方的可接受字段以生成的配置目录为准。
+
+-----
+
+<a id="understand-the-implementation"></a>
+## 理解实现
+
+<details>
+<summary>实现细节——点击展开</summary>
+
+本提供方通过 subprocess 能力启动 Pi，等待 RPC 就绪响应，提交一次 prompt 并读取最后一条 assistant 文本。取消与销毁会终止受管理的进程树并等待其完全结束。
+
+</details>
+
+-----
+
+<a id="further-exploration"></a>
+## 进一步探索
+
+- 子代理能力——共享提供方契约。
+- 子代理工具——面向模型的委托消费方。
+- Subprocess 能力——受管理的子进程契约。
+
+-----
+
+本包注册固定的 `pi` 子代理提供方。每个被接受的 run 都会在委托方 Session 的工作目录中启动 [Pi 编码 Agent](https://github.com/earendil-works/pi)（`@earendil-works/pi-coding-agent`）的 RPC 模式，通过 Pi 的逐行 JSON stdio 协议提交一个自包含的文本任务，并仅通过共享的 `dsh-subagent` 结果契约返回最终答案。
 
 ## 启动与所有权
 
-`start(request)` 只接受非空文本块序列，并从父 Session 推导子进程 cwd。随后通过 `@deepseek-ai/dsh-subprocess` 启动固定的 `pi --mode rpc` 命令，仅在 RPC 服务器应答了 `get_state` 就绪探测后发布 run。发布前的失败或取消会先关闭线、终止受管理的进程树、等待其退出，再拒绝 `start()`。
+`start(request)` 只接受非空文本块序列，并从父 Session 推导子进程 cwd。随后通过 `dsh-subprocess` 启动固定的 `pi --mode rpc` 命令，仅在 RPC 服务器应答了 `get_state` 就绪探测后发布 run。发布前的失败或取消会先关闭线、终止受管理的进程树、等待其退出，再拒绝 `start()`。
 
 已发布的 `run.result` 恰好开启一个 turn。它发送 `prompt` 命令，等待流式 `agent_settled` 事件，再用 `get_last_assistant_text` 读取终态答案——最后一条非空 assistant 文本。Pi 的 RPC 响应不暴露已提交的中间输出投影，因此取消与失败以空输出快照结算。结算后无答案、`prompt` 响应为 `success: false`、协议失败或进程失败都映射为 `error`；本提供方不产生 `max-tokens` 与 `refusal`。
 
@@ -30,7 +91,7 @@
 
 生产环境从 subprocess 执行世界的凭据擦除 `PATH` 解析 `pi`。原生 Pi 设置与认证保持权威：本插件不安装 Pi、不选模型、不创建 Pi home、不登录、不探测版本。凭据形态的环境变量在显式 `env` 叠加前被移除，因此给子进程的 API key 或令牌必须在这里提供。
 
-安装本 bundle（`dsh plugin --profile web add ./packages/subagent-pi`）后，提供方在宿主机加载一次，在工具调用前不启动任何 Pi 进程。模型面向的委派工具按 agent 授予：本仓库的 `presets/standard-polished` preset 携带已启用的 `tool-subagent-pi` 行，或者把下面两行加入现有 preset（复制 preset 并从工具行移除 `disabled`，与 codex/claude-code 行完全一致）。
+随附 profile 在宿主机加载一次本提供方，在工具调用前不启动任何 Pi 进程。完整 Agent Preset 携带下面的工具行并带 `disabled: true`；复制 preset 并移除该字段，即可只把 `subagent_pi` 暴露给由该副本组合出的 Agent。自定义宿主组合也可直接使用两行。
 
 ```yaml
 - id: subagent-pi
@@ -85,6 +146,8 @@ Pi 子进程在新会话中把独立文本任务作为一次全新 RPC prompt �
 
 ## 已知局限与后续工作
 
+<a id="known-limitations-and-deferred-work"></a>
+
 - **每次 run 都是全新 RPC 进程、会话与 turn** —— 没有续跑、恢复、池化、进度流或产品会话持久化。
 - **宿主管理的产品安装与账号状态** —— 缺失或不兼容的 `pi`、配置错误或认证失败以启动期或运行期错误呈现；插件不提供安装器、登录流程或运行时版本门禁。
 - **模型选择保留给宿主 Pi 配置** —— 默认 `args` 不选择提供方；需要时部署通过 `args` 钉住 `--provider`/`--model`。
@@ -93,3 +156,13 @@ Pi 子进程在新会话中把独立文本任务作为一次全新 RPC prompt �
 - **仅最终文本** —— 推理、中间消息、工具流量、用量、stderr 与工作区 diff 保持产品本地；取消与失败不带部分输出，因为 Pi RPC 协议不暴露已提交的部分投影。
 - **无可选共享能力** —— 输出 schema、子 persona、工具过滤与 harness 深度强制会被共享服务对本提供方拒绝。
 - **无墙钟超时或副作用回滚** —— 调用方取消长任务，取消前被改动的文件或外部系统不会恢复。
+
+<a id="dev-note"></a>
+### 开发备注
+
+<details>
+<summary>供维护者参考的工作上下文——点击展开</summary>
+
+无。
+
+</details>

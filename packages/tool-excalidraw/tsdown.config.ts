@@ -1,10 +1,9 @@
 /**
- * tool-excalidraw builds: the node-half lib plus the invariant companion,
- * both consumed from the tsc-emitted `lib/types`.
+ * Node-half bundle from the tsc-emitted `lib/types`.
  */
 export default [{
   name: '@reachforstar/dsh-tool-excalidraw',
-  entry: ['lib/types/index.js', 'lib/types/invariant.js'],
+  entry: ['lib/types/index.js'],
   outDir: 'lib',
   format: ['esm'],
   platform: 'node',
