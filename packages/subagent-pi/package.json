@@ -55,6 +55,7 @@
     "@earendil-works/pi-coding-agent": "0.84.2",
     "@types/node": "^22.10.0",
     "tsdown": "^0.22.0",
+    "tsx": "^4.23.13",
     "typescript": "^6.0.3",
     "vitest": "^4.0.0"
   },
