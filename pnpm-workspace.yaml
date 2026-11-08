@@ -10,6 +10,9 @@ overrides:
   '@deepseek-ai/dsh-shell': 0.2.2-rc.1
   '@deepseek-ai/dsh-output-retention': 0.2.2-rc.1
   '@deepseek-ai/dsh-client-ui-theme': 0.2.2-rc.1
+  # One schemastery instance: mixed 3.18/3.19 copies make declaration emit
+  # reference a copy the emitting package does not depend on (TS2883).
+  '@deepseek-ai/schemastery': 3.19.0
 
 # pnpm 11 ignores dependency build scripts unless allowlisted; these are on
 # the suite's dependency chain and need their postinstall steps (native
